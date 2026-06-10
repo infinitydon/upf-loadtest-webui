@@ -21,6 +21,10 @@ type RunDetail = {
   events?: any[];
   logs?: string;
 };
+type SessionState = {
+  available: boolean; runName?: string; count?: number; baseId?: number; uePool?: string;
+  ueStart?: string; qfi?: number; completedAt?: string; unavailableReason?: string;
+};
 
 const getToken = () => localStorage.getItem("upfToken") || "";
 async function api(path: string, init?: RequestInit) {
@@ -39,6 +43,7 @@ function Console() {
   const [namespace, setNamespace] = useState("upf-loadtest");
   const [status, setStatus] = useState<any>();
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [sessionState, setSessionState] = useState<SessionState>();
   const [busy, setBusy] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [activeRun, setActiveRun] = useState<{name:string; type:string}>();
@@ -51,11 +56,15 @@ function Console() {
 
   const refresh = async () => {
     try {
-      const [s, r] = await Promise.all([
+      const [s, r, pfcp] = await Promise.all([
         api(`/api/status?release=${release}&namespace=${namespace}`),
         api(`/api/runs?namespace=${namespace}`).catch(() => ({ items: [] })),
+        api(`/api/session-state?release=${release}&namespace=${namespace}`).catch(() => ({ available: false })),
       ]);
-      setStatus(s); setJobs(r.items || []);
+      setStatus(s); setJobs(r.items || []); setSessionState(pfcp);
+      if (pfcp.available) {
+        trafficForm.setFieldsValue({sessionCount: pfcp.count, teidStart: pfcp.baseId, ueStart: pfcp.ueStart});
+      }
     } catch (e: any) { msg.error(e.message); }
   };
 
@@ -119,6 +128,13 @@ function Console() {
       () => api(path, {method:"POST", body:JSON.stringify({...values, release, namespace})}),
       type === "pfcp" ? "PFCP injection submitted" : "TRex load test submitted",
     );
+    if (result?.name && type === "pfcp") {
+      trafficForm.setFieldsValue({
+        sessionCount: values.count,
+        teidStart: values.baseId,
+        ueStart: firstUE(values.uePool),
+      });
+    }
     if (result?.name) monitorRun(result.name, type);
   };
 
@@ -223,6 +239,13 @@ function Console() {
             </Form>
           </Card> },
           { key: "traffic", label: "TRex traffic", children: <Card title="Start GTP-U traffic">
+            {sessionState?.available ? <Alert className="session-state" type="success" showIcon
+              message={`Active PFCP sessions: ${sessionState.count}`}
+              description={`Base ID ${sessionState.baseId}, first UE ${sessionState.ueStart}, pool ${sessionState.uePool}. Source: ${sessionState.runName}.`}
+            /> : <Alert className="session-state" type="warning" showIcon
+              message="No active PFCP session set"
+              description={sessionState?.unavailableReason || "Inject PFCP sessions before starting traffic."}
+            />}
             <Form form={trafficForm} layout="vertical" initialValues={{pps:100000,duration:15,packetSize:96,sessionCount:1000,teidStart:1,teidStep:10,ueStart:"48.0.0.1",innerDst:"10.0.5.1",maxLossPercent:0.1}}
               onFinish={(v)=>startTrackedRun("/api/traffic",v,"traffic")}>
               <Row gutter={16}>
@@ -236,7 +259,7 @@ function Console() {
                 <Col xs={12} md={6}><Form.Item name="innerDst" label="Inner destination"><Input /></Form.Item></Col>
                 <Col xs={12} md={6}><Form.Item name="maxLossPercent" label="Maximum loss (%)"><InputNumber min={0} max={100} step={0.1}/></Form.Item></Col>
               </Row>
-              <Button type="primary" htmlType="submit" icon={<PlayCircleOutlined />} loading={busy} disabled={!status?.installed}>Start traffic</Button>
+              <Button type="primary" htmlType="submit" icon={<PlayCircleOutlined />} loading={busy} disabled={!status?.installed || !sessionState?.available}>Start traffic</Button>
             </Form>
           </Card> },
           { key: "history", label: "Run history", children: <Card>
@@ -282,6 +305,18 @@ function Console() {
       <Card size="small" title="Live runner output"><pre className="logs">{runDetail?.logs || `Waiting for runner output${containerWaiting ? ` (${containerWaiting})` : ""}...`}</pre></Card>
     </Drawer>
   </Layout>;
+}
+
+function firstUE(cidr: string) {
+  const [address] = cidr.split("/");
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return address;
+  for (let index = 3; index >= 0; index--) {
+    parts[index]++;
+    if (parts[index] <= 255) break;
+    parts[index] = 0;
+  }
+  return parts.join(".");
 }
 
 function Root() {

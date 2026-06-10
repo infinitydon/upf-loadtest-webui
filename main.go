@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +65,18 @@ type trafficRequest struct {
 	MaxLoss    float64 `json:"maxLossPercent"`
 }
 
+type sessionState struct {
+	Available   bool   `json:"available"`
+	RunName     string `json:"runName,omitempty"`
+	Count       int    `json:"count,omitempty"`
+	BaseID      int    `json:"baseId,omitempty"`
+	UEPool      string `json:"uePool,omitempty"`
+	UEStart     string `json:"ueStart,omitempty"`
+	QFI         int    `json:"qfi,omitempty"`
+	CompletedAt string `json:"completedAt,omitempty"`
+	Unavailable string `json:"unavailableReason,omitempty"`
+}
+
 type deleteRequest struct {
 	Release   string `json:"release"`
 	Namespace string `json:"namespace"`
@@ -87,6 +100,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/runs/detail", s.auth(s.runDetail))
 	mux.HandleFunc("/api/runs/logs", s.auth(s.logs))
 	mux.HandleFunc("/api/runs/stop", s.auth(s.stop))
+	mux.HandleFunc("/api/session-state", s.auth(s.sessionState))
 	mux.HandleFunc("/api/sessions", s.auth(s.sessions))
 	mux.HandleFunc("/api/traffic", s.auth(s.traffic))
 	mux.HandleFunc("/", s.static)
@@ -214,6 +228,10 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, errors.New("count, baseId, or qfi is outside the allowed range"))
 		return
 	}
+	if _, err := firstAddress(req.UEPool); err != nil {
+		writeError(w, 400, fmt.Errorf("invalid UE pool: %w", err))
+		return
+	}
 	name := runName("pfcp")
 	service := req.Release + "-travelping-upf-loadtest-pfcp-sim"
 	script := `set -eu
@@ -234,6 +252,13 @@ echo "PFCP_RUN_COMPLETE sessions=${SESSION_COUNT}"`
 			"BASE_ID": strconv.Itoa(req.BaseID), "UE_POOL": req.UEPool, "QFI": strconv.Itoa(req.QFI),
 			"GNB_ADDR": req.GNBAddr, "UPF_N3_ADDR": req.UPFN3Addr, "UPF_ADDR": req.UPFAddr,
 		})
+	setJobAnnotations(job, map[string]string{
+		"loadtest.infinitydon.io/release":       req.Release,
+		"loadtest.infinitydon.io/session-count": strconv.Itoa(req.Count),
+		"loadtest.infinitydon.io/base-id":       strconv.Itoa(req.BaseID),
+		"loadtest.infinitydon.io/ue-pool":       req.UEPool,
+		"loadtest.infinitydon.io/qfi":           strconv.Itoa(req.QFI),
+	})
 	s.createJob(w, r, job, name)
 }
 
@@ -251,6 +276,22 @@ func (s *server) traffic(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, errors.New("traffic parameters are outside the allowed range"))
 		return
 	}
+	state, err := s.activeSessionState(r.Context(), req.Namespace, req.Release)
+	if err != nil {
+		writeError(w, 500, err)
+		return
+	}
+	if !state.Available {
+		writeError(w, http.StatusConflict, errors.New("no active PFCP session set; inject PFCP sessions after the latest simulator restart"))
+		return
+	}
+	if req.SessionCnt != state.Count || req.TEIDStart != state.BaseID || req.UEStart != state.UEStart {
+		writeError(w, http.StatusConflict, fmt.Errorf(
+			"traffic parameters do not match active PFCP sessions: expected sessionCount=%d, teidStart=%d, ueStart=%s",
+			state.Count, state.BaseID, state.UEStart,
+		))
+		return
+	}
 	name := runName("trex")
 	service := req.Release + "-travelping-upf-loadtest-trex-rpc"
 	node := s.workloadNode(r.Context(), req.Namespace, req.Release, "trex")
@@ -263,7 +304,159 @@ func (s *server) traffic(w http.ResponseWriter, r *http.Request) {
 			"UE_START": req.UEStart, "INNER_DST": req.InnerDst,
 			"MAX_LOSS_PERCENT": strconv.FormatFloat(req.MaxLoss, 'f', -1, 64),
 		})
+	setJobAnnotations(job, map[string]string{
+		"loadtest.infinitydon.io/release":       req.Release,
+		"loadtest.infinitydon.io/session-count": strconv.Itoa(req.SessionCnt),
+		"loadtest.infinitydon.io/teid-start":    strconv.Itoa(req.TEIDStart),
+		"loadtest.infinitydon.io/ue-start":      req.UEStart,
+	})
 	s.createJob(w, r, job, name)
+}
+
+func (s *server) sessionState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	release, namespace := queryRelease(r)
+	if !validRelease(w, release, namespace) {
+		return
+	}
+	state, err := s.activeSessionState(r.Context(), namespace, release)
+	if err != nil {
+		writeError(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, state)
+}
+
+func (s *server) activeSessionState(ctx context.Context, namespace, release string) (sessionState, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	podOut, err := command(queryCtx, "kubectl", []string{
+		"get", "pods", "-n", namespace,
+		"-l", "app.kubernetes.io/instance=" + release + ",component=pfcp-sim",
+		"-o", "json",
+	}, nil)
+	if err != nil {
+		return sessionState{}, fmt.Errorf("read PFCP simulator pod: %w: %s", err, podOut)
+	}
+	jobsOut, err := command(queryCtx, "kubectl", []string{
+		"get", "jobs", "-n", namespace,
+		"-l", "app.kubernetes.io/managed-by=" + managedByLabel + ",loadtest.infinitydon.io/type=pfcp",
+		"-o", "json",
+	}, nil)
+	if err != nil {
+		return sessionState{}, fmt.Errorf("read PFCP jobs: %w: %s", err, jobsOut)
+	}
+	return findActiveSessionState([]byte(jobsOut), []byte(podOut), release)
+}
+
+func findActiveSessionState(jobsJSON, podsJSON []byte, release string) (sessionState, error) {
+	var pods struct {
+		Items []struct {
+			Metadata struct {
+				CreationTimestamp time.Time `json:"creationTimestamp"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(podsJSON, &pods); err != nil {
+		return sessionState{}, fmt.Errorf("decode PFCP simulator pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return sessionState{Unavailable: "PFCP simulator pod was not found"}, nil
+	}
+	simulatorStarted := pods.Items[0].Metadata.CreationTimestamp
+	for _, pod := range pods.Items[1:] {
+		if pod.Metadata.CreationTimestamp.After(simulatorStarted) {
+			simulatorStarted = pod.Metadata.CreationTimestamp
+		}
+	}
+
+	var jobs struct {
+		Items []struct {
+			Metadata struct {
+				Name        string            `json:"name"`
+				Annotations map[string]string `json:"annotations"`
+			} `json:"metadata"`
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []struct {
+							Env []struct {
+								Name  string `json:"name"`
+								Value string `json:"value"`
+							} `json:"env"`
+						} `json:"containers"`
+					} `json:"spec"`
+				} `json:"template"`
+			} `json:"spec"`
+			Status struct {
+				Succeeded      int       `json:"succeeded"`
+				CompletionTime time.Time `json:"completionTime"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(jobsJSON, &jobs); err != nil {
+		return sessionState{}, fmt.Errorf("decode PFCP jobs: %w", err)
+	}
+
+	var active sessionState
+	var latest time.Time
+	for _, job := range jobs.Items {
+		if job.Status.Succeeded < 1 || job.Status.CompletionTime.Before(simulatorStarted) || !job.Status.CompletionTime.After(latest) {
+			continue
+		}
+		values := map[string]string{}
+		if len(job.Spec.Template.Spec.Containers) > 0 {
+			for _, item := range job.Spec.Template.Spec.Containers[0].Env {
+				values[item.Name] = item.Value
+			}
+		}
+		annotations := job.Metadata.Annotations
+		jobRelease := annotations["loadtest.infinitydon.io/release"]
+		if jobRelease == "" {
+			if !strings.HasPrefix(values["PFCP_SERVICE"], release+"-") {
+				continue
+			}
+		} else if jobRelease != release {
+			continue
+		}
+		count, countErr := strconv.Atoi(firstNonEmpty(annotations["loadtest.infinitydon.io/session-count"], values["SESSION_COUNT"]))
+		baseID, baseErr := strconv.Atoi(firstNonEmpty(annotations["loadtest.infinitydon.io/base-id"], values["BASE_ID"]))
+		qfi, _ := strconv.Atoi(firstNonEmpty(annotations["loadtest.infinitydon.io/qfi"], values["QFI"]))
+		uePool := firstNonEmpty(annotations["loadtest.infinitydon.io/ue-pool"], values["UE_POOL"])
+		ueStart, ueErr := firstAddress(uePool)
+		if countErr != nil || baseErr != nil || ueErr != nil {
+			continue
+		}
+		active = sessionState{
+			Available: true, RunName: job.Metadata.Name, Count: count, BaseID: baseID,
+			UEPool: uePool, UEStart: ueStart, QFI: qfi, CompletedAt: job.Status.CompletionTime.Format(time.RFC3339),
+		}
+		latest = job.Status.CompletionTime
+	}
+	if !active.Available {
+		active.Unavailable = "No successful PFCP injection exists after the latest simulator restart"
+	}
+	return active, nil
+}
+
+func firstAddress(cidr string) (string, error) {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return "", err
+	}
+	return prefix.Masked().Addr().Next().String(), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *server) createJob(w http.ResponseWriter, r *http.Request, job map[string]interface{}, name string) {
@@ -438,6 +631,14 @@ func jobManifest(name, namespace, kind, image, node string, commandArgs []string
 			}}, "spec": podSpec},
 		},
 	}
+}
+
+func setJobAnnotations(job map[string]interface{}, annotations map[string]string) {
+	metadata := job["metadata"].(map[string]interface{})
+	metadata["annotations"] = annotations
+	template := job["spec"].(map[string]interface{})["template"].(map[string]interface{})
+	templateMetadata := template["metadata"].(map[string]interface{})
+	templateMetadata["annotations"] = annotations
 }
 
 func (s *server) workloadNode(ctx context.Context, namespace, release, component string) string {

@@ -59,3 +59,53 @@ func TestFilterRunEvents(t *testing.T) {
 		t.Fatalf("expected one matching event, got %d", len(events))
 	}
 }
+
+func TestFirstAddress(t *testing.T) {
+	got, err := firstAddress("48.0.0.0/8")
+	if err != nil || got != "48.0.0.1" {
+		t.Fatalf("expected 48.0.0.1, got %q, %v", got, err)
+	}
+}
+
+func TestFindActiveSessionState(t *testing.T) {
+	pods := []byte(`{"items":[{"metadata":{"creationTimestamp":"2026-06-10T01:00:00Z"}}]}`)
+	jobs := []byte(`{"items":[
+		{"metadata":{"name":"old"},"spec":{"template":{"spec":{"containers":[{"env":[
+			{"name":"PFCP_SERVICE","value":"upf-loadtest-travelping-upf-loadtest-pfcp-sim"},
+			{"name":"SESSION_COUNT","value":"1"},{"name":"BASE_ID","value":"6001"},
+			{"name":"UE_POOL","value":"48.0.0.0/8"},{"name":"QFI","value":"9"}
+		]}]}}},"status":{"succeeded":1,"completionTime":"2026-06-10T00:59:00Z"}},
+		{"metadata":{"name":"current","annotations":{
+			"loadtest.infinitydon.io/release":"upf-loadtest",
+			"loadtest.infinitydon.io/session-count":"1000",
+			"loadtest.infinitydon.io/base-id":"1",
+			"loadtest.infinitydon.io/ue-pool":"48.0.0.0/8",
+			"loadtest.infinitydon.io/qfi":"9"
+		}},"spec":{"template":{"spec":{"containers":[{"env":[]}]}}},
+		"status":{"succeeded":1,"completionTime":"2026-06-10T01:01:00Z"}}
+	]}`)
+
+	state, err := findActiveSessionState(jobs, pods, "upf-loadtest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Available || state.RunName != "current" || state.Count != 1000 || state.BaseID != 1 || state.UEStart != "48.0.0.1" {
+		t.Fatalf("unexpected state: %#v", state)
+	}
+}
+
+func TestFindActiveSessionStateRejectsPreRestartJob(t *testing.T) {
+	pods := []byte(`{"items":[{"metadata":{"creationTimestamp":"2026-06-10T02:00:00Z"}}]}`)
+	jobs := []byte(`{"items":[{"metadata":{"name":"old"},"spec":{"template":{"spec":{"containers":[{"env":[
+		{"name":"PFCP_SERVICE","value":"upf-loadtest-travelping-upf-loadtest-pfcp-sim"},
+		{"name":"SESSION_COUNT","value":"1000"},{"name":"BASE_ID","value":"1"},{"name":"UE_POOL","value":"48.0.0.0/8"}
+	]}]}}},"status":{"succeeded":1,"completionTime":"2026-06-10T01:00:00Z"}}]}`)
+
+	state, err := findActiveSessionState(jobs, pods, "upf-loadtest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Available {
+		t.Fatalf("expected stale state to be unavailable: %#v", state)
+	}
+}
