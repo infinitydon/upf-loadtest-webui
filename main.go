@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.11"
+	defaultChartVersion = "0.1.12"
 	managedByLabel      = "upf-loadtest-webui"
 )
 
@@ -937,8 +937,11 @@ packet=(Ether()/IP(src="10.0.3.1",dst="10.0.3.10")/UDP(sport=2152,dport=2152,chk
         GTP_U_Header(teid=teid_start)/IP(src=ue_start,dst=inner_dst)/UDP(sport=1024,dport=9,chksum=0)/Raw(load=b"x"*pad))
 vm=STLVM()
 ue_max=str(ipaddress.ip_address(ue_start)+count-1)
+outer_sport_max=min(65535,1024+count-1)
 vm.var(name="ue_ip",min_value=ue_start,max_value=ue_max,size=4,step=1,op="inc")
 vm.var(name="teid",min_value=teid_start,max_value=teid_start+(count-1)*teid_step,size=4,step=teid_step,op="inc")
+vm.var(name="outer_sport",min_value=1024,max_value=outer_sport_max,size=2,step=1,op="inc")
+vm.write(fv_name="outer_sport",pkt_offset="UDP:0.sport")
 vm.write(fv_name="teid",pkt_offset=46); vm.write(fv_name="ue_ip",pkt_offset="IP:1.src"); vm.fix_chksum(offset="IP:1")
 stream=STLStream(packet=STLPktBuilder(pkt=packet,vm=vm),mode=STLTXCont(pps=1))
 client=STLClient(server=server)
