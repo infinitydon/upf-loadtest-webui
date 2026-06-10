@@ -147,7 +147,7 @@ function Console() {
             </Form>
           </Card> },
           { key: "traffic", label: "TRex traffic", children: <Card title="Start GTP-U traffic">
-            <Form form={trafficForm} layout="vertical" initialValues={{pps:100000,duration:15,packetSize:96,sessionCount:1000,teidStart:1,teidStep:10,ueStart:"48.0.0.1",innerDst:"10.0.5.1"}}
+            <Form form={trafficForm} layout="vertical" initialValues={{pps:100000,duration:15,packetSize:96,sessionCount:1000,teidStart:1,teidStep:10,ueStart:"48.0.0.1",innerDst:"10.0.5.1",maxLossPercent:0.1}}
               onFinish={(v)=>run(()=>api("/api/traffic",{method:"POST",body:JSON.stringify({...v,release,namespace})}),"TRex run started")}>
               <Row gutter={16}>
                 <Col xs={12} md={6}><Form.Item name="pps" label="Packets / second"><InputNumber min={1}/></Form.Item></Col>
@@ -158,6 +158,7 @@ function Console() {
                 <Col xs={12} md={6}><Form.Item name="teidStep" label="TEID step"><InputNumber min={1}/></Form.Item></Col>
                 <Col xs={12} md={6}><Form.Item name="ueStart" label="First UE address"><Input /></Form.Item></Col>
                 <Col xs={12} md={6}><Form.Item name="innerDst" label="Inner destination"><Input /></Form.Item></Col>
+                <Col xs={12} md={6}><Form.Item name="maxLossPercent" label="Maximum loss (%)"><InputNumber min={0} max={100} step={0.1}/></Form.Item></Col>
               </Row>
               <Button type="primary" htmlType="submit" icon={<PlayCircleOutlined />} loading={busy} disabled={!status?.installed}>Start traffic</Button>
             </Form>

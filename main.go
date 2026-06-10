@@ -20,7 +20,7 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.1"
+	defaultChartVersion = "0.1.2"
 	managedByLabel      = "upf-loadtest-webui"
 )
 
@@ -51,16 +51,17 @@ type sessionRequest struct {
 }
 
 type trafficRequest struct {
-	Release    string `json:"release"`
-	Namespace  string `json:"namespace"`
-	PPS        int    `json:"pps"`
-	Duration   int    `json:"duration"`
-	PacketSize int    `json:"packetSize"`
-	SessionCnt int    `json:"sessionCount"`
-	TEIDStart  int    `json:"teidStart"`
-	TEIDStep   int    `json:"teidStep"`
-	UEStart    string `json:"ueStart"`
-	InnerDst   string `json:"innerDst"`
+	Release    string  `json:"release"`
+	Namespace  string  `json:"namespace"`
+	PPS        int     `json:"pps"`
+	Duration   int     `json:"duration"`
+	PacketSize int     `json:"packetSize"`
+	SessionCnt int     `json:"sessionCount"`
+	TEIDStart  int     `json:"teidStart"`
+	TEIDStep   int     `json:"teidStep"`
+	UEStart    string  `json:"ueStart"`
+	InnerDst   string  `json:"innerDst"`
+	MaxLoss    float64 `json:"maxLossPercent"`
 }
 
 type deleteRequest struct {
@@ -132,6 +133,7 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 		"upgrade", "--install", req.Release, defaultChart,
 		"--version", req.ChartVersion, "--namespace", req.Namespace, "--create-namespace",
 		"--wait", "--timeout", "12m",
+		"--atomic", "--reset-values",
 		"--set-string", "namespace.name=" + req.Namespace,
 		"--set-string", "global.namespace=" + req.Namespace,
 		"--set-string", "global.targetNode=" + req.TargetNode,
@@ -220,7 +222,8 @@ pfcpctl -s "$server" service configure --n3-addr "$UPF_N3_ADDR" --remote-peer-ad
 pfcpctl -s "$server" service associate
 pfcpctl -s "$server" session create --count "$SESSION_COUNT" --baseID "$BASE_ID" --gnb-addr "$GNB_ADDR" --ue-pool "$UE_POOL" --qfi "$QFI"
 echo "PFCP_RUN_COMPLETE sessions=${SESSION_COUNT}"`
-	job := jobManifest(name, req.Namespace, "pfcp", "ghcr.io/infinitydon/pfcpsim-travelping:v1.4.4-7",
+	node := s.workloadNode(r.Context(), req.Namespace, req.Release, "pfcp-sim")
+	job := jobManifest(name, req.Namespace, "pfcp", "ghcr.io/infinitydon/pfcpsim-travelping:v1.4.4-7", node,
 		[]string{"/bin/sh", "-c", script}, map[string]string{
 			"PFCP_SERVICE": service, "SESSION_COUNT": strconv.Itoa(req.Count),
 			"BASE_ID": strconv.Itoa(req.BaseID), "UE_POOL": req.UEPool, "QFI": strconv.Itoa(req.QFI),
@@ -239,19 +242,21 @@ func (s *server) traffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.PPS < 1 || req.Duration < 1 || req.Duration > 86400 || req.PacketSize < 78 || req.PacketSize > 9000 ||
-		req.SessionCnt < 1 || req.TEIDStart < 1 || req.TEIDStep < 1 {
+		req.SessionCnt < 1 || req.TEIDStart < 1 || req.TEIDStep < 1 || req.MaxLoss < 0 || req.MaxLoss > 100 {
 		writeError(w, 400, errors.New("traffic parameters are outside the allowed range"))
 		return
 	}
 	name := runName("trex")
 	service := req.Release + "-travelping-upf-loadtest-trex-rpc"
-	job := jobManifest(name, req.Namespace, "traffic", "eisai/cisco-trex:v3.06",
+	node := s.workloadNode(r.Context(), req.Namespace, req.Release, "trex")
+	job := jobManifest(name, req.Namespace, "traffic", "eisai/cisco-trex:v3.06", node,
 		[]string{"/bin/bash", "-c", trafficScript}, map[string]string{
 			"PYTHONPATH":  "/opt/trex/v3.06/automation/trex_control_plane/interactive",
 			"TREX_SERVER": service, "PPS": strconv.Itoa(req.PPS), "DURATION": strconv.Itoa(req.Duration),
 			"PACKET_SIZE": strconv.Itoa(req.PacketSize), "SESSION_COUNT": strconv.Itoa(req.SessionCnt),
 			"TEID_START": strconv.Itoa(req.TEIDStart), "TEID_STEP": strconv.Itoa(req.TEIDStep),
 			"UE_START": req.UEStart, "INNER_DST": req.InnerDst,
+			"MAX_LOSS_PERCENT": strconv.FormatFloat(req.MaxLoss, 'f', -1, 64),
 		})
 	s.createJob(w, r, job, name)
 }
@@ -342,10 +347,20 @@ func (s *server) static(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "index.html"))
 }
 
-func jobManifest(name, namespace, kind, image string, commandArgs []string, envs map[string]string) map[string]interface{} {
+func jobManifest(name, namespace, kind, image, node string, commandArgs []string, envs map[string]string) map[string]interface{} {
 	envList := make([]map[string]string, 0, len(envs))
 	for k, v := range envs {
 		envList = append(envList, map[string]string{"name": k, "value": v})
+	}
+	podSpec := map[string]interface{}{
+		"restartPolicy": "Never",
+		"containers": []map[string]interface{}{{"name": "runner", "image": image, "imagePullPolicy": "IfNotPresent",
+			"command": commandArgs[:1], "args": commandArgs[1:], "env": envList,
+			"resources": map[string]interface{}{"requests": map[string]string{"cpu": "100m", "memory": "128Mi"}, "limits": map[string]string{"cpu": "1", "memory": "1Gi"}},
+		}},
+	}
+	if node != "" {
+		podSpec["nodeSelector"] = map[string]string{"kubernetes.io/hostname": node}
 	}
 	return map[string]interface{}{
 		"apiVersion": "batch/v1", "kind": "Job",
@@ -356,15 +371,21 @@ func jobManifest(name, namespace, kind, image string, commandArgs []string, envs
 			"backoffLimit": 0, "ttlSecondsAfterFinished": 86400,
 			"template": map[string]interface{}{"metadata": map[string]interface{}{"labels": map[string]string{
 				"app.kubernetes.io/managed-by": managedByLabel, "loadtest.infinitydon.io/type": kind,
-			}}, "spec": map[string]interface{}{
-				"restartPolicy": "Never",
-				"containers": []map[string]interface{}{{"name": "runner", "image": image, "imagePullPolicy": "IfNotPresent",
-					"command": commandArgs[:1], "args": commandArgs[1:], "env": envList,
-					"resources": map[string]interface{}{"requests": map[string]string{"cpu": "100m", "memory": "128Mi"}, "limits": map[string]string{"cpu": "1", "memory": "1Gi"}},
-				}},
-			}},
+			}}, "spec": podSpec},
 		},
 	}
+}
+
+func (s *server) workloadNode(ctx context.Context, namespace, release, component string) string {
+	out, err := command(ctx, "kubectl", []string{
+		"get", "pods", "-n", namespace,
+		"-l", "app.kubernetes.io/instance=" + release + ",component=" + component,
+		"-o", "jsonpath={.items[0].spec.nodeName}",
+	}, nil)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 func command(ctx context.Context, name string, args []string, stdin []byte) (string, error) {
@@ -446,7 +467,7 @@ from scapy.contrib.gtp import GTP_U_Header
 server=os.environ["TREX_SERVER"]; pps=int(os.environ["PPS"]); duration=int(os.environ["DURATION"])
 size=int(os.environ["PACKET_SIZE"]); count=int(os.environ["SESSION_COUNT"])
 teid_start=int(os.environ["TEID_START"]); teid_step=int(os.environ["TEID_STEP"])
-ue_start=os.environ["UE_START"]; inner_dst=os.environ["INNER_DST"]
+ue_start=os.environ["UE_START"]; inner_dst=os.environ["INNER_DST"]; max_loss=float(os.environ["MAX_LOSS_PERCENT"])
 pad=size-78
 packet=(Ether()/IP(src="10.0.3.1",dst="10.0.3.10")/UDP(sport=2152,dport=2152,chksum=0)/
         GTP_U_Header(teid=teid_start)/IP(src=ue_start,dst=inner_dst)/UDP(sport=1024,dport=9,chksum=0)/Raw(load=b"x"*pad))
@@ -466,10 +487,12 @@ try:
     client.add_streams([stream],ports=[0]); client.clear_stats()
     client.start(ports=[0],mult="%spps"%pps,duration=duration); client.wait_on_traffic(ports=[0])
     stats=client.get_stats(); tx=stats[0]["opackets"]; rx=stats[1]["ipackets"]; lost=max(tx-rx,0)
+    loss_percent=lost*100.0/tx if tx else 100.0
     result={"timestamp":time.time(),"requested_pps":pps,"duration_seconds":duration,"packet_size":size,
-            "tx_packets":tx,"rx_packets":rx,"lost_packets":lost,"loss_percent":lost*100.0/tx if tx else 100.0}
+            "tx_packets":tx,"rx_packets":rx,"lost_packets":lost,"loss_percent":loss_percent,
+            "max_loss_percent":max_loss,"passed":tx>0 and rx>0 and loss_percent<=max_loss}
     print("TREX_RESULT "+json.dumps(result),flush=True)
-    if tx == 0 or rx == 0: raise SystemExit("no end-to-end traffic received")
+    if not result["passed"]: raise SystemExit("traffic result exceeded the loss threshold")
 finally:
     if client.is_connected(): client.disconnect()
 PY
