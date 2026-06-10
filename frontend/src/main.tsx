@@ -144,7 +144,7 @@ function Console() {
   const runType = activeRun?.type || runDetail?.job?.metadata?.labels?.["loadtest.infinitydon.io/type"] || "run";
   const stepLines = (runDetail?.logs || "").split("\n").filter((line) => line.startsWith("STEP ")).map((line) => line.slice(5));
   const configuredSteps = runType === "pfcp"
-    ? ["Waiting for PFCP simulator", "Resetting previous PFCP association", "Configuring PFCP simulator", "Establishing PFCP association", "Creating PFCP sessions"]
+    ? ["Waiting for PFCP simulator", "Configuring PFCP simulator", "Establishing PFCP association", "Creating PFCP sessions"]
     : ["Preparing TRex traffic profile", "Connecting to TRex server", "Installing GTP-U stream", "Transmitting traffic", "Collecting traffic counters"];
   const completedSteps = configuredSteps.filter((step) => stepLines.some((line) =>
     line.startsWith(step) || (step === "Creating PFCP sessions" && /^Creating \d+ PFCP sessions$/.test(line))

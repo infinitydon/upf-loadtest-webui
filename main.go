@@ -234,14 +234,27 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, fmt.Errorf("invalid UE pool: %w", err))
 		return
 	}
+	resetCtx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	deployment := req.Release + "-travelping-upf-loadtest-pfcp-sim"
+	if out, err := command(resetCtx, "kubectl", []string{
+		"rollout", "restart", "deployment/" + deployment, "-n", req.Namespace,
+	}, nil); err != nil {
+		writeError(w, 500, fmt.Errorf("restart PFCP simulator: %w: %s", err, out))
+		return
+	}
+	if out, err := command(resetCtx, "kubectl", []string{
+		"rollout", "status", "deployment/" + deployment, "-n", req.Namespace, "--timeout=120s",
+	}, nil); err != nil {
+		writeError(w, 500, fmt.Errorf("wait for PFCP simulator restart: %w: %s", err, out))
+		return
+	}
 	name := runName("pfcp")
 	service := req.Release + "-travelping-upf-loadtest-pfcp-sim"
 	script := `set -eu
 echo "STEP Waiting for PFCP simulator"
 server="${PFCP_SERVICE}:54321"
 for i in $(seq 1 60); do nc -z -w 2 "${PFCP_SERVICE}" 54321 && break; sleep 2; done
-echo "STEP Resetting previous PFCP association"
-pfcpctl -s "$server" service disassociate || true
 echo "STEP Configuring PFCP simulator"
 pfcpctl -s "$server" service configure --n3-addr "$UPF_N3_ADDR" --remote-peer-addr "$UPF_ADDR"
 echo "STEP Establishing PFCP association"

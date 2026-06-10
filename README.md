@@ -17,6 +17,8 @@ Job with its own status, logs, cancellation, and 24-hour history.
 
 - Install, upgrade, inspect, and delete the workload Helm release.
 - Configure PFCP session count, UE pool, base ID, QFI, and endpoint addresses.
+- Restart the PFCP simulator before injection so each run replaces stale
+  associations and sessions with a clean session set.
 - Show the active PFCP session count and parameters on the injection tab.
 - Verify the live UPF PFCP association and session count before reporting
   sessions as active or allowing a TRex run.
@@ -47,7 +49,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.0 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.10 \
+  --version 0.1.11 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'
