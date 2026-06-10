@@ -22,11 +22,12 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.2"
+	defaultChartVersion = "0.1.3"
 	managedByLabel      = "upf-loadtest-webui"
 )
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+var upfSessionCount = regexp.MustCompile(`Sessions:\s+([0-9]+)`)
 
 type server struct {
 	staticDir string
@@ -247,7 +248,7 @@ echo "STEP Creating ${SESSION_COUNT} PFCP sessions"
 pfcpctl -s "$server" session create --count "$SESSION_COUNT" --baseID "$BASE_ID" --gnb-addr "$GNB_ADDR" --ue-pool "$UE_POOL" --qfi "$QFI"
 echo "PFCP_RUN_COMPLETE sessions=${SESSION_COUNT}"`
 	node := s.workloadNode(r.Context(), req.Namespace, req.Release, "pfcp-sim")
-	job := jobManifest(name, req.Namespace, "pfcp", "ghcr.io/infinitydon/pfcpsim-travelping:v1.4.4-7", node,
+	job := jobManifest(name, req.Namespace, "pfcp", "ghcr.io/infinitydon/pfcpsim-travelping:v1.4.4-8", node,
 		[]string{"/bin/sh", "-c", script}, map[string]string{
 			"PFCP_SERVICE": service, "SESSION_COUNT": strconv.Itoa(req.Count),
 			"BASE_ID": strconv.Itoa(req.BaseID), "UE_POOL": req.UEPool, "QFI": strconv.Itoa(req.QFI),
@@ -351,17 +352,63 @@ func (s *server) activeSessionState(ctx context.Context, namespace, release stri
 		return sessionState{}, fmt.Errorf("read PFCP jobs: %w: %s", err, jobsOut)
 	}
 	state, err := findActiveSessionState([]byte(jobsOut), []byte(podOut), release)
-	if err != nil || state.Available {
-		return state, err
-	}
-	persisted, err := s.persistedSessionState(queryCtx, namespace, release, []byte(podOut))
 	if err != nil {
 		return sessionState{}, err
 	}
-	if persisted.Available {
-		return persisted, nil
+	if !state.Available {
+		persisted, err := s.persistedSessionState(queryCtx, namespace, release, []byte(podOut))
+		if err != nil {
+			return sessionState{}, err
+		}
+		if persisted.Available {
+			state = persisted
+		}
+	}
+	if !state.Available {
+		return state, nil
+	}
+	liveCount, err := s.liveUPFSessionCount(queryCtx, namespace, release)
+	if err != nil {
+		state.Available = false
+		state.Unavailable = err.Error()
+		return state, nil
+	}
+	if liveCount != state.Count {
+		state.Available = false
+		state.Unavailable = fmt.Sprintf(
+			"UPF reports %d live sessions, but the last injection recorded %d; inject PFCP sessions again",
+			liveCount, state.Count,
+		)
 	}
 	return state, nil
+}
+
+func (s *server) liveUPFSessionCount(ctx context.Context, namespace, release string) (int, error) {
+	podOut, err := command(ctx, "kubectl", []string{
+		"get", "pods", "-n", namespace,
+		"-l", "app.kubernetes.io/instance=" + release + ",component=upf",
+		"-o", "jsonpath={.items[0].metadata.name}",
+	}, nil)
+	if err != nil || strings.TrimSpace(podOut) == "" {
+		return 0, fmt.Errorf("UPF pod is unavailable")
+	}
+	out, err := command(ctx, "kubectl", []string{
+		"exec", "-n", namespace, strings.TrimSpace(podOut), "-c", "upf", "--",
+		"vppctl", "show", "upf", "association",
+	}, nil)
+	if err != nil {
+		return 0, fmt.Errorf("cannot read live UPF sessions: %w: %s", err, out)
+	}
+	return parseUPFSessionCount(out), nil
+}
+
+func parseUPFSessionCount(output string) int {
+	match := upfSessionCount.FindStringSubmatch(output)
+	if len(match) != 2 {
+		return 0
+	}
+	count, _ := strconv.Atoi(match[1])
+	return count
 }
 
 func findActiveSessionState(jobsJSON, podsJSON []byte, release string) (sessionState, error) {

@@ -67,6 +67,16 @@ func TestFirstAddress(t *testing.T) {
 	}
 }
 
+func TestParseUPFSessionCount(t *testing.T) {
+	output := "Node: 10.0.4.1   Recovery Time Stamp: 2026/06/10 02:19:57:000 Sessions: 1000"
+	if got := parseUPFSessionCount(output); got != 1000 {
+		t.Fatalf("expected 1000 sessions, got %d", got)
+	}
+	if got := parseUPFSessionCount(""); got != 0 {
+		t.Fatalf("expected no sessions, got %d", got)
+	}
+}
+
 func TestFindActiveSessionState(t *testing.T) {
 	pods := []byte(`{"items":[{"metadata":{"creationTimestamp":"2026-06-10T01:00:00Z"}}]}`)
 	jobs := []byte(`{"items":[
