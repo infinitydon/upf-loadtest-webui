@@ -144,7 +144,7 @@ function Console() {
   const runType = activeRun?.type || runDetail?.job?.metadata?.labels?.["loadtest.infinitydon.io/type"] || "run";
   const stepLines = (runDetail?.logs || "").split("\n").filter((line) => line.startsWith("STEP ")).map((line) => line.slice(5));
   const configuredSteps = runType === "pfcp"
-    ? ["Waiting for PFCP simulator", "Configuring PFCP simulator", "Establishing PFCP association", "Creating PFCP sessions"]
+    ? ["Waiting for PFCP simulator", "Resetting previous PFCP association", "Configuring PFCP simulator", "Establishing PFCP association", "Creating PFCP sessions"]
     : ["Preparing TRex traffic profile", "Connecting to TRex server", "Installing GTP-U stream", "Transmitting traffic", "Collecting traffic counters"];
   const completedSteps = configuredSteps.filter((step) => stepLines.some((line) =>
     line.startsWith(step) || (step === "Creating PFCP sessions" && /^Creating \d+ PFCP sessions$/.test(line))
@@ -324,6 +324,7 @@ function Console() {
           <Col xs={12} lg={6}><Statistic title="TX wire rate" value={trafficResult.tx_l1_mbps} precision={2} suffix="Mbps"/></Col>
           <Col xs={12} lg={6}><Statistic title="RX wire rate" value={trafficResult.rx_l1_mbps} precision={2} suffix="Mbps"/></Col>
           <Col xs={12} lg={6}><Statistic title="Lost packets" value={trafficResult.lost_packets}/></Col>
+          <Col xs={12} lg={6}><Statistic title="Unclassified RX" value={trafficResult.unclassified_rx_packets||0}/></Col>
           <Col xs={12} lg={6}><Statistic title="Peak TRex CPU" value={trafficResult.peak_cpu_percent} precision={1} suffix="%"/></Col>
           <Col xs={12} lg={6}><Statistic title="Port errors" value={(trafficResult.tx_errors||0)+(trafficResult.rx_errors||0)}/></Col>
           <Col xs={12} lg={6}><Statistic title="Queue full events" value={trafficResult.queue_full||0}/></Col>
@@ -335,6 +336,7 @@ function Console() {
           <Descriptions.Item label="Loss threshold">{trafficResult.max_loss_percent}%</Descriptions.Item>
           <Descriptions.Item label="TX L2 throughput">{trafficResult.tx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
           <Descriptions.Item label="RX L2 throughput">{trafficResult.rx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
+          <Descriptions.Item label="RX accounting" span={2}>RX above transmitted packets is reported separately as unclassified port traffic and is not counted as forwarded test traffic.</Descriptions.Item>
           <Descriptions.Item label="First threshold breach" span={2}>{trafficResult.first_loss_threshold_seconds == null ? "None" : `${trafficResult.first_loss_threshold_seconds}s`}</Descriptions.Item>
         </Descriptions>
         <Divider>Time-series samples</Divider>

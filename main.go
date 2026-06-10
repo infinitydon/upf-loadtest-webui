@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.4"
+	defaultChartVersion = "0.1.5"
 	managedByLabel      = "upf-loadtest-webui"
 )
 
@@ -240,6 +240,8 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 echo "STEP Waiting for PFCP simulator"
 server="${PFCP_SERVICE}:54321"
 for i in $(seq 1 60); do nc -z -w 2 "${PFCP_SERVICE}" 54321 && break; sleep 2; done
+echo "STEP Resetting previous PFCP association"
+pfcpctl -s "$server" service disassociate || true
 echo "STEP Configuring PFCP simulator"
 pfcpctl -s "$server" service configure --n3-addr "$UPF_N3_ADDR" --remote-peer-addr "$UPF_ADDR"
 echo "STEP Establishing PFCP association"
@@ -248,7 +250,7 @@ echo "STEP Creating ${SESSION_COUNT} PFCP sessions"
 pfcpctl -s "$server" session create --count "$SESSION_COUNT" --baseID "$BASE_ID" --gnb-addr "$GNB_ADDR" --ue-pool "$UE_POOL" --qfi "$QFI"
 echo "PFCP_RUN_COMPLETE sessions=${SESSION_COUNT}"`
 	node := s.workloadNode(r.Context(), req.Namespace, req.Release, "pfcp-sim")
-	job := jobManifest(name, req.Namespace, "pfcp", "ghcr.io/infinitydon/pfcpsim-travelping:v1.4.4-9", node,
+	job := jobManifest(name, req.Namespace, "pfcp", "ghcr.io/infinitydon/pfcpsim-travelping:v1.4.4-10", node,
 		[]string{"/bin/sh", "-c", script}, map[string]string{
 			"PFCP_SERVICE": service, "SESSION_COUNT": strconv.Itoa(req.Count),
 			"BASE_ID": strconv.Itoa(req.BaseID), "UE_POOL": req.UEPool, "QFI": strconv.Itoa(req.QFI),
@@ -881,7 +883,7 @@ func requestLog(next http.Handler) http.Handler {
 const trafficScript = `set -eu
 echo "STEP Preparing TRex traffic profile"
 cat >/tmp/run.py <<'PY'
-import ipaddress, json, math, os, signal, time
+import ipaddress, json, os, signal, time
 from trex.stl.api import *
 from scapy.contrib.gtp import GTP_U_Header
 
@@ -910,14 +912,17 @@ try:
     client.add_streams([stream],ports=[0]); client.clear_stats()
     print("STEP Transmitting traffic",flush=True)
     started=time.monotonic(); interval=max(1.0,duration/300.0); samples=[]
+    previous_time=started; previous_tx=0; previous_rx=0
     client.start(ports=[0],mult="%spps"%pps,duration=duration)
     while client.is_traffic_active(ports=[0]):
         time.sleep(interval)
-        stats=client.get_stats(ports=[0,1]); elapsed=min(time.monotonic()-started,duration)
+        now=time.monotonic(); stats=client.get_stats(ports=[0,1]); elapsed=min(now-started,duration)
         tx=stats[0]["opackets"]; rx=stats[1]["ipackets"]; lost=max(tx-rx,0)
+        sample_period=max(now-previous_time,0.001)
+        interval_tx=max(tx-previous_tx,0); interval_rx=max(rx-previous_rx,0)
         sample={"elapsed_seconds":round(elapsed,3),"tx_packets":tx,"rx_packets":rx,"lost_packets":lost,
                 "loss_percent":lost*100.0/tx if tx else 100.0,
-                "tx_pps":stats[0].get("tx_pps",0),"rx_pps":stats[1].get("rx_pps",0),
+                "tx_pps":interval_tx/sample_period,"rx_pps":interval_rx/sample_period,
                 "tx_l1_bps":stats[0].get("tx_bps_L1",0),"rx_l1_bps":stats[1].get("rx_bps_L1",0),
                 "tx_util_percent":stats[0].get("tx_util",0),"rx_util_percent":stats[1].get("rx_util",0),
                 "cpu_util_percent":stats.get("global",{}).get("cpu_util",0),
@@ -925,9 +930,11 @@ try:
                 "tx_errors":stats[0].get("oerrors",0),"rx_errors":stats[1].get("ierrors",0)}
         samples.append(sample)
         print("TREX_SAMPLE "+json.dumps(sample),flush=True)
+        previous_time=now; previous_tx=tx; previous_rx=rx
     client.wait_on_traffic(ports=[0])
     print("STEP Collecting traffic counters",flush=True)
-    stats=client.get_stats(); tx=stats[0]["opackets"]; rx=stats[1]["ipackets"]; lost=max(tx-rx,0)
+    stats=client.get_stats(); tx=stats[0]["opackets"]; raw_rx=stats[1]["ipackets"]
+    rx=min(raw_rx,tx); unclassified_rx=max(raw_rx-tx,0); lost=max(tx-rx,0)
     loss_percent=lost*100.0/tx if tx else 100.0
     elapsed=max(time.monotonic()-started,0.001); rate_period=max(float(duration),0.001); expected=pps*duration
     first_bad=next((s for s in samples if s["loss_percent"]>max_loss),None)
@@ -945,8 +952,9 @@ try:
             "actual_tx_pps":tx/rate_period,"actual_rx_pps":rx/rate_period,
             "tx_l2_mbps":stats[0]["obytes"]*8.0/rate_period/1000000,
             "rx_l2_mbps":stats[1]["ibytes"]*8.0/rate_period/1000000,
-            "tx_l1_mbps":tx*(size+20)*8.0/rate_period/1000000,
-            "rx_l1_mbps":rx*(size+20)*8.0/rate_period/1000000,
+            "tx_l1_mbps":(stats[0]["obytes"]+tx*20)*8.0/rate_period/1000000,
+            "rx_l1_mbps":(stats[1]["ibytes"]+raw_rx*20)*8.0/rate_period/1000000,
+            "unclassified_rx_packets":unclassified_rx,
             "tx_errors":stats[0].get("oerrors",0),"rx_errors":stats[1].get("ierrors",0),
             "queue_full":stats.get("global",{}).get("queue_full",0),
             "peak_cpu_percent":max([s["cpu_util_percent"] for s in samples] or [0]),
