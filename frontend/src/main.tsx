@@ -224,6 +224,13 @@ function Console() {
             </Descriptions>
           </Card> },
           { key: "sessions", label: "PFCP sessions", children: <Card title="Inject PFCP sessions">
+            {sessionState?.available ? <Alert className="session-state" type="success" showIcon
+              message={`Active PFCP sessions: ${sessionState.count}`}
+              description={`Base ID ${sessionState.baseId}, UE pool ${sessionState.uePool}, first UE ${sessionState.ueStart}, QFI ${sessionState.qfi}. Source: ${sessionState.runName}${sessionState.completedAt ? `, completed ${new Date(sessionState.completedAt).toLocaleString()}` : ""}.`}
+            /> : <Alert className="session-state" type="warning" showIcon
+              message="No active PFCP sessions"
+              description={sessionState?.unavailableReason || "Start an injection to create PFCP sessions."}
+            />}
             <Form form={sessionForm} layout="vertical" initialValues={{count:1000,baseId:1,uePool:"48.0.0.0/8",qfi:9,gnbAddr:"10.0.3.1",upfN3Addr:"10.0.3.10",upfAddr:"10.0.4.9:8805"}}
               onFinish={(v)=>startTrackedRun("/api/sessions",v,"pfcp")}>
               <Row gutter={16}>
