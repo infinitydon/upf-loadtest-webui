@@ -84,6 +84,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/release/install", s.auth(s.install))
 	mux.HandleFunc("/api/release", s.auth(s.uninstall))
 	mux.HandleFunc("/api/runs", s.auth(s.runs))
+	mux.HandleFunc("/api/runs/detail", s.auth(s.runDetail))
 	mux.HandleFunc("/api/runs/logs", s.auth(s.logs))
 	mux.HandleFunc("/api/runs/stop", s.auth(s.stop))
 	mux.HandleFunc("/api/sessions", s.auth(s.sessions))
@@ -216,10 +217,14 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 	name := runName("pfcp")
 	service := req.Release + "-travelping-upf-loadtest-pfcp-sim"
 	script := `set -eu
+echo "STEP Waiting for PFCP simulator"
 server="${PFCP_SERVICE}:54321"
 for i in $(seq 1 60); do nc -z -w 2 "${PFCP_SERVICE}" 54321 && break; sleep 2; done
+echo "STEP Configuring PFCP simulator"
 pfcpctl -s "$server" service configure --n3-addr "$UPF_N3_ADDR" --remote-peer-addr "$UPF_ADDR"
+echo "STEP Establishing PFCP association"
 pfcpctl -s "$server" service associate
+echo "STEP Creating ${SESSION_COUNT} PFCP sessions"
 pfcpctl -s "$server" session create --count "$SESSION_COUNT" --baseID "$BASE_ID" --gnb-addr "$GNB_ADDR" --ue-pool "$UE_POOL" --qfi "$QFI"
 echo "PFCP_RUN_COMPLETE sessions=${SESSION_COUNT}"`
 	node := s.workloadNode(r.Context(), req.Namespace, req.Release, "pfcp-sim")
@@ -292,6 +297,65 @@ func (s *server) runs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(out))
+}
+
+func (s *server) runDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	namespace, name := r.URL.Query().Get("namespace"), r.URL.Query().Get("name")
+	if !validName(namespace) || !validName(name) {
+		writeError(w, 400, errors.New("invalid namespace or run name"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	jobOut, err := command(ctx, "kubectl", []string{"get", "job", name, "-n", namespace, "-o", "json"}, nil)
+	if err != nil {
+		writeCommandError(w, err, jobOut)
+		return
+	}
+	podsOut, _ := command(ctx, "kubectl", []string{"get", "pods", "-n", namespace, "-l", "job-name=" + name, "-o", "json"}, nil)
+	eventsOut, _ := command(ctx, "kubectl", []string{
+		"get", "events", "-n", namespace,
+		"--field-selector", "involvedObject.kind=Pod",
+		"--sort-by=.metadata.creationTimestamp", "-o", "json",
+	}, nil)
+	logsOut, _ := command(ctx, "kubectl", []string{"logs", "-n", namespace, "job/" + name, "--tail=1000"}, nil)
+
+	var job, pods, events interface{}
+	json.Unmarshal([]byte(jobOut), &job)
+	json.Unmarshal([]byte(podsOut), &pods)
+	json.Unmarshal([]byte(eventsOut), &events)
+	writeJSON(w, 200, map[string]interface{}{
+		"job": job, "pods": pods, "events": filterRunEvents(events, name), "logs": logsOut,
+	})
+}
+
+func filterRunEvents(raw interface{}, jobName string) []interface{} {
+	result := []interface{}{}
+	object, ok := raw.(map[string]interface{})
+	if !ok {
+		return result
+	}
+	items, ok := object["items"].([]interface{})
+	if !ok {
+		return result
+	}
+	for _, item := range items {
+		event, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		involved, _ := event["involvedObject"].(map[string]interface{})
+		name, _ := involved["name"].(string)
+		if strings.HasPrefix(name, jobName+"-") {
+			result = append(result, event)
+		}
+	}
+	return result
 }
 
 func (s *server) logs(w http.ResponseWriter, r *http.Request) {
@@ -459,6 +523,7 @@ func requestLog(next http.Handler) http.Handler {
 }
 
 const trafficScript = `set -eu
+echo "STEP Preparing TRex traffic profile"
 cat >/tmp/run.py <<'PY'
 import ipaddress, json, os, signal, time
 from trex.stl.api import *
@@ -483,9 +548,13 @@ def stop(*_):
     except: pass
 signal.signal(signal.SIGTERM,stop)
 try:
+    print("STEP Connecting to TRex server",flush=True)
     client.connect(); client.acquire(ports=[0,1],force=True); client.reset(ports=[0,1])
+    print("STEP Installing GTP-U stream",flush=True)
     client.add_streams([stream],ports=[0]); client.clear_stats()
+    print("STEP Transmitting traffic",flush=True)
     client.start(ports=[0],mult="%spps"%pps,duration=duration); client.wait_on_traffic(ports=[0])
+    print("STEP Collecting traffic counters",flush=True)
     stats=client.get_stats(); tx=stats[0]["opackets"]; rx=stats[1]["ipackets"]; lost=max(tx-rx,0)
     loss_percent=lost*100.0/tx if tx else 100.0
     result={"timestamp":time.time(),"requested_pps":pps,"duration_seconds":duration,"packet_size":size,

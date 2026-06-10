@@ -3,18 +3,24 @@ import ReactDOM from "react-dom/client";
 import { Refine } from "@refinedev/core";
 import {
   Alert, App as AntApp, Button, Card, Col, ConfigProvider, Descriptions, Divider, Drawer,
-  Form, Input, InputNumber, Layout, List, Modal, Row, Space, Statistic, Table, Tabs, Tag,
-  Typography, message, theme,
+  Empty, Form, Input, InputNumber, Layout, Menu, Modal, Progress, Row, Space, Statistic,
+  Table, Tabs, Tag, Timeline, Typography, message, theme,
 } from "antd";
 import {
   CloudServerOutlined, DashboardOutlined, DeleteOutlined, PlayCircleOutlined,
-  ReloadOutlined, RocketOutlined, StopOutlined,
+  ReloadOutlined, RocketOutlined, StopOutlined, UnorderedListOutlined,
 } from "@ant-design/icons";
 import "antd/dist/reset.css";
 import "./styles.css";
 
 type Config = { chart: string; chartVersion: string; defaultRelease: string; defaultNamespace: string; authenticationEnabled: boolean };
 type Job = { metadata: { name: string; creationTimestamp: string; labels?: Record<string,string> }; status?: { active?: number; succeeded?: number; failed?: number } };
+type RunDetail = {
+  job?: any;
+  pods?: { items?: any[] };
+  events?: any[];
+  logs?: string;
+};
 
 const getToken = () => localStorage.getItem("upfToken") || "";
 async function api(path: string, init?: RequestInit) {
@@ -34,8 +40,10 @@ function Console() {
   const [status, setStatus] = useState<any>();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [busy, setBusy] = useState(false);
-  const [logs, setLogs] = useState("");
-  const [logOpen, setLogOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [activeRun, setActiveRun] = useState<{name:string; type:string}>();
+  const [runDetail, setRunDetail] = useState<RunDetail>();
+  const [runOpen, setRunOpen] = useState(false);
   const [installForm] = Form.useForm();
   const [sessionForm] = Form.useForm();
   const [trafficForm] = Form.useForm();
@@ -66,7 +74,7 @@ function Console() {
 
   const run = async (fn: () => Promise<any>, ok: string) => {
     setBusy(true);
-    try { await fn(); msg.success(ok); await refresh(); }
+    try { const result = await fn(); msg.success(ok); await refresh(); return result; }
     catch (e: any) { msg.error(e.message); }
     finally { setBusy(false); }
   };
@@ -79,19 +87,71 @@ function Console() {
     state: j.status?.active ? "Running" : j.status?.succeeded ? "Succeeded" : j.status?.failed ? "Failed" : "Pending",
   })), [jobs]);
 
-  const showLogs = async (name: string) => {
-    try { const data = await api(`/api/runs/logs?namespace=${namespace}&name=${name}`); setLogs(data.logs); setLogOpen(true); }
-    catch (e: any) { msg.error(e.message); }
+  const monitorRun = (name: string, type: string) => {
+    setActiveRun({name, type});
+    setRunDetail(undefined);
+    setRunOpen(true);
   };
+
+  useEffect(() => {
+    if (!runOpen || !activeRun) return;
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const detail = await api(`/api/runs/detail?namespace=${namespace}&name=${activeRun.name}`);
+        if (!stopped) setRunDetail(detail);
+        const terminal = detail.job?.status?.succeeded || detail.job?.status?.failed;
+        if (!terminal && !stopped) window.setTimeout(poll, 1000);
+        if (terminal && !stopped) refresh();
+      } catch (e: any) {
+        if (!stopped) {
+          msg.error(e.message);
+          window.setTimeout(poll, 2000);
+        }
+      }
+    };
+    poll();
+    return () => { stopped = true; };
+  }, [runOpen, activeRun?.name, namespace]);
+
+  const startTrackedRun = async (path: string, values: any, type: string) => {
+    const result = await run(
+      () => api(path, {method:"POST", body:JSON.stringify({...values, release, namespace})}),
+      type === "pfcp" ? "PFCP injection submitted" : "TRex load test submitted",
+    );
+    if (result?.name) monitorRun(result.name, type);
+  };
+
+  const runPod = runDetail?.pods?.items?.[0];
+  const runState = runDetail?.job?.status?.succeeded ? "Succeeded" : runDetail?.job?.status?.failed ? "Failed" :
+    runDetail?.job?.status?.active ? "Running" : "Pending";
+  const runType = activeRun?.type || runDetail?.job?.metadata?.labels?.["loadtest.infinitydon.io/type"] || "run";
+  const stepLines = (runDetail?.logs || "").split("\n").filter((line) => line.startsWith("STEP ")).map((line) => line.slice(5));
+  const configuredSteps = runType === "pfcp"
+    ? ["Waiting for PFCP simulator", "Configuring PFCP simulator", "Establishing PFCP association", "Creating PFCP sessions"]
+    : ["Preparing TRex traffic profile", "Connecting to TRex server", "Installing GTP-U stream", "Transmitting traffic", "Collecting traffic counters"];
+  const completedSteps = configuredSteps.filter((step) => stepLines.some((line) =>
+    line.startsWith(step) || (step === "Creating PFCP sessions" && /^Creating \d+ PFCP sessions$/.test(line))
+  ));
+  const podPhase = runPod?.status?.phase;
+  const containerWaiting = runPod?.status?.containerStatuses?.[0]?.state?.waiting?.reason;
+  const progress = runState === "Succeeded" || runState === "Failed" ? 100 :
+    Math.min(90, (podPhase ? 20 : 5) + completedSteps.length * (70 / configuredSteps.length));
+  const resultLine = (runDetail?.logs || "").split("\n").find((line) => line.startsWith("TREX_RESULT "));
+  let trafficResult: any;
+  try { trafficResult = resultLine ? JSON.parse(resultLine.slice(12)) : undefined; } catch { trafficResult = undefined; }
 
   return <Layout className="shell">
     {holder}
     <Layout.Sider width={245} theme="dark" className="sider">
       <div className="brand"><RocketOutlined /><div><strong>UPF Load Test</strong><small>Travelping + TRex</small></div></div>
-      <List className="nav" dataSource={[
-        [<DashboardOutlined />, "Dashboard"], [<CloudServerOutlined />, "Environment"],
-        [<PlayCircleOutlined />, "Test runners"],
-      ]} renderItem={(item) => <List.Item>{item[0]}<span>{item[1]}</span></List.Item>} />
+      <Menu className="nav" theme="dark" mode="inline" selectedKeys={[activeTab === "sessions" || activeTab === "traffic" || activeTab === "history" ? "runners" : activeTab]}
+        onClick={({key}) => setActiveTab(key === "runners" ? "sessions" : key)}
+        items={[
+          {key:"dashboard", icon:<DashboardOutlined />, label:"Dashboard"},
+          {key:"environment", icon:<CloudServerOutlined />, label:"Environment"},
+          {key:"runners", icon:<PlayCircleOutlined />, label:"Test runners"},
+        ]} />
       <div className="chart-ref"><small>Workload chart</small><code>{config?.chartVersion || "..."}</code></div>
     </Layout.Sider>
     <Layout>
@@ -106,7 +166,23 @@ function Console() {
           <Col xs={24} md={8}><Card><Statistic title="Ready pods" value={ready} suffix={`/ ${pods.length}`} /></Card></Col>
           <Col xs={24} md={8}><Card><Statistic title="Recorded runs" value={jobs.length} /></Card></Col>
         </Row>
-        <Tabs defaultActiveKey="environment" items={[
+        <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
+          { key: "dashboard", label: "Dashboard", children: <Row gutter={[16,16]}>
+            <Col xs={24} lg={14}><Card title="Environment overview">
+              <Descriptions bordered size="small" column={1}>
+                <Descriptions.Item label="Release">{namespace}/{release}</Descriptions.Item>
+                <Descriptions.Item label="Status"><Tag color={status?.installed ? "green" : "red"}>{status?.helm?.info?.status || "not installed"}</Tag></Descriptions.Item>
+                <Descriptions.Item label="Workload pods">{ready} of {pods.length} ready</Descriptions.Item>
+                <Descriptions.Item label="OCI chart">{config?.chart}:{config?.chartVersion}</Descriptions.Item>
+              </Descriptions>
+            </Card></Col>
+            <Col xs={24} lg={10}><Card title="Recent activity">
+              {jobRows.length ? <Timeline items={jobRows.slice().reverse().slice(0,5).map((item:any)=>({
+                color:item.state==="Succeeded"?"green":item.state==="Failed"?"red":"blue",
+                children:<Button type="link" className="activity-link" onClick={()=>monitorRun(item.name,item.type)}>{item.type}: {item.name} ({item.state})</Button>
+              }))}/> : <Empty description="No test runs yet"/>}
+            </Card></Col>
+          </Row> },
           { key: "environment", label: "Environment", children: <Card>
             <Form form={installForm} layout="vertical" onFinish={(v) => {
               setRelease(v.release); setNamespace(v.namespace);
@@ -133,7 +209,7 @@ function Console() {
           </Card> },
           { key: "sessions", label: "PFCP sessions", children: <Card title="Inject PFCP sessions">
             <Form form={sessionForm} layout="vertical" initialValues={{count:1000,baseId:1,uePool:"48.0.0.0/8",qfi:9,gnbAddr:"10.0.3.1",upfN3Addr:"10.0.3.10",upfAddr:"10.0.4.9:8805"}}
-              onFinish={(v)=>run(()=>api("/api/sessions",{method:"POST",body:JSON.stringify({...v,release,namespace})}),"PFCP injection started")}>
+              onFinish={(v)=>startTrackedRun("/api/sessions",v,"pfcp")}>
               <Row gutter={16}>
                 <Col xs={12} md={4}><Form.Item name="count" label="Sessions"><InputNumber min={1} max={1000000}/></Form.Item></Col>
                 <Col xs={12} md={4}><Form.Item name="baseId" label="Base ID"><InputNumber min={1}/></Form.Item></Col>
@@ -148,7 +224,7 @@ function Console() {
           </Card> },
           { key: "traffic", label: "TRex traffic", children: <Card title="Start GTP-U traffic">
             <Form form={trafficForm} layout="vertical" initialValues={{pps:100000,duration:15,packetSize:96,sessionCount:1000,teidStart:1,teidStep:10,ueStart:"48.0.0.1",innerDst:"10.0.5.1",maxLossPercent:0.1}}
-              onFinish={(v)=>run(()=>api("/api/traffic",{method:"POST",body:JSON.stringify({...v,release,namespace})}),"TRex run started")}>
+              onFinish={(v)=>startTrackedRun("/api/traffic",v,"traffic")}>
               <Row gutter={16}>
                 <Col xs={12} md={6}><Form.Item name="pps" label="Packets / second"><InputNumber min={1}/></Form.Item></Col>
                 <Col xs={12} md={6}><Form.Item name="duration" label="Duration (seconds)"><InputNumber min={1} max={86400}/></Form.Item></Col>
@@ -167,14 +243,44 @@ function Console() {
             <Table dataSource={jobRows} pagination={{pageSize:10}} columns={[
               {title:"Run",dataIndex:"name"}, {title:"Type",dataIndex:"type",render:(v)=><Tag>{v}</Tag>},
               {title:"Created",dataIndex:"created"}, {title:"State",dataIndex:"state",render:(v)=><Tag color={v==="Succeeded"?"green":v==="Failed"?"red":"blue"}>{v}</Tag>},
-              {title:"Actions",render:(_,row:any)=><Space><Button size="small" onClick={()=>showLogs(row.name)}>Logs</Button>
+              {title:"Actions",render:(_,row:any)=><Space><Button size="small" icon={<UnorderedListOutlined/>} onClick={()=>monitorRun(row.name,row.type)}>Monitor</Button>
                 {row.state==="Running"&&<Button danger size="small" icon={<StopOutlined />} onClick={()=>run(()=>api(`/api/runs/stop?namespace=${namespace}&name=${row.name}`,{method:"DELETE"}),"Run stopped")}>Stop</Button>}</Space>}
             ]} />
           </Card> },
         ]} />
       </Layout.Content>
     </Layout>
-    <Drawer title="Run logs" open={logOpen} width="70%" onClose={()=>setLogOpen(false)}><pre className="logs">{logs}</pre></Drawer>
+    <Drawer title={<Space><span>Run monitor</span>{activeRun && <Tag>{activeRun.name}</Tag>}<Tag color={runState==="Succeeded"?"green":runState==="Failed"?"red":"blue"}>{runState}</Tag></Space>}
+      open={runOpen} width="75%" onClose={()=>setRunOpen(false)}
+      extra={runState==="Running" && activeRun ? <Button danger icon={<StopOutlined/>} onClick={()=>run(()=>api(`/api/runs/stop?namespace=${namespace}&name=${activeRun.name}`,{method:"DELETE"}),"Run stopped")}>Stop</Button> : null}>
+      <Progress percent={Math.round(progress)} status={runState==="Failed"?"exception":runState==="Succeeded"?"success":"active"} />
+      <Row gutter={[16,16]} className="monitor-grid">
+        <Col xs={24} lg={10}><Card size="small" title="Execution sequence">
+          <Timeline items={[
+            {color:runDetail?.job?"green":"blue",children:"Kubernetes Job created"},
+            {color:podPhase?"green":"gray",children:podPhase ? `Pod scheduled: ${runPod?.spec?.nodeName || "pending node"}` : "Waiting for pod scheduling"},
+            {color:podPhase==="Running"||runState==="Succeeded"||runState==="Failed"?"green":"blue",children:containerWaiting ? `Container: ${containerWaiting}` : "Runner container started"},
+            ...configuredSteps.map((step)=>({color:completedSteps.includes(step)?"green":runState==="Failed"?"red":"gray",children:step})),
+            {color:runState==="Succeeded"?"green":runState==="Failed"?"red":"gray",children:`Run ${runState.toLowerCase()}`},
+          ]}/>
+        </Card></Col>
+        <Col xs={24} lg={14}><Card size="small" title="Kubernetes events">
+          {(runDetail?.events || []).length ? <Timeline items={(runDetail?.events || []).slice(-10).map((event:any)=>({
+            color:event.type==="Warning"?"red":"blue",
+            children:<><strong>{event.reason}</strong><br/><Typography.Text type="secondary">{event.message}</Typography.Text></>
+          }))}/> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Waiting for events"/>}
+        </Card></Col>
+      </Row>
+      {trafficResult && <Card size="small" title="TRex result" className="result-card">
+        <Row gutter={16}>
+          <Col span={6}><Statistic title="TX packets" value={trafficResult.tx_packets}/></Col>
+          <Col span={6}><Statistic title="RX packets" value={trafficResult.rx_packets}/></Col>
+          <Col span={6}><Statistic title="Loss" value={trafficResult.loss_percent} suffix="%"/></Col>
+          <Col span={6}><Statistic title="Verdict" value={trafficResult.passed?"PASS":"FAIL"} valueStyle={{color:trafficResult.passed?"#16a34a":"#dc2626"}}/></Col>
+        </Row>
+      </Card>}
+      <Card size="small" title="Live runner output"><pre className="logs">{runDetail?.logs || `Waiting for runner output${containerWaiting ? ` (${containerWaiting})` : ""}...`}</pre></Card>
+    </Drawer>
   </Layout>;
 }
 

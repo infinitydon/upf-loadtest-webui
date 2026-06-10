@@ -48,3 +48,14 @@ func TestAuth(t *testing.T) {
 		t.Fatalf("expected 200, got %d", response.Code)
 	}
 }
+
+func TestFilterRunEvents(t *testing.T) {
+	raw := map[string]interface{}{"items": []interface{}{
+		map[string]interface{}{"involvedObject": map[string]interface{}{"name": "trex-123-abc"}},
+		map[string]interface{}{"involvedObject": map[string]interface{}{"name": "another-pod"}},
+	}}
+	events := filterRunEvents(raw, "trex-123")
+	if len(events) != 1 {
+		t.Fatalf("expected one matching event, got %d", len(events))
+	}
+}

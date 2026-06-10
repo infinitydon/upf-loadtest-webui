@@ -20,7 +20,10 @@ Job with its own status, logs, cancellation, and 24-hour history.
 - Configure TRex PPS, duration, Ethernet frame size (excluding FCS), UE count,
   TEID range, and inner destination.
 - Display workload pod readiness and test Job history.
-- View logs and stop active runs.
+- Follow live scheduling, image pull, container startup, PFCP/TRex application
+  steps, Kubernetes events, logs, counters, and pass/fail results.
+- Reopen the monitor for historical runs and stop active runs.
+- Navigate directly between dashboard, environment, and test runner views.
 - NodePort by default, with ClusterIP, LoadBalancer, and optional Ingress.
 - Optional bearer-token authentication from a Kubernetes Secret.
 
@@ -35,7 +38,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.0 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.2 \
+  --version 0.1.3 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'
