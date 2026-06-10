@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.6"
+	defaultChartVersion = "0.1.7"
 	managedByLabel      = "upf-loadtest-webui"
 )
 

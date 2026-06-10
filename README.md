@@ -6,7 +6,7 @@ injecting PFCP sessions, and running Cisco TRex GTP-U traffic.
 The controller installs the public workload chart directly from:
 
 ```text
-oci://ghcr.io/infinitydon/travelping-upf-loadtest:0.1.6
+oci://ghcr.io/infinitydon/travelping-upf-loadtest:0.1.7
 ```
 
 No GHCR credentials are required. Workload installation disables the chart's
@@ -52,7 +52,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.0 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.12 \
+  --version 0.1.13 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'
