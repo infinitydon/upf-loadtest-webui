@@ -1,0 +1,63 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5.0.0
+
+      - name: Validate versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          chart_version="$(helm show chart chart | awk '$1 == "version:" {print $2}')"
+          test "$version" = "$chart_version"
+
+      - name: Test
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./...
+          helm lint chart
+          npm --prefix frontend ci
+          npm --prefix frontend audit --omit=dev
+          npm --prefix frontend run build
+
+      - name: Log in to GHCR
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Publish image
+        shell: bash
+        run: |
+          docker build \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${GITHUB_REF_NAME}" \
+            --tag "ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME}" \
+            .
+          docker push "ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME}"
+
+      - name: Publish Helm chart
+        shell: bash
+        run: |
+          mkdir -p dist
+          helm package chart --destination dist
+          helm push dist/*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts

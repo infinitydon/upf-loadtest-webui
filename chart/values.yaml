@@ -1,0 +1,38 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/infinitydon/upf-loadtest-webui
+  tag: v0.1.0
+  pullPolicy: IfNotPresent
+
+service:
+  type: NodePort
+  port: 8080
+  nodePort: null
+
+ingress:
+  enabled: false
+  className: ""
+  host: upf-loadtest.example.com
+  tlsSecretName: ""
+
+auth:
+  existingSecret: ""
+  secretKey: token
+  token: ""
+
+defaults:
+  release: upf-loadtest
+  namespace: upf-loadtest
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
