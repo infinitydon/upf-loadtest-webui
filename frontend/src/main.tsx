@@ -54,7 +54,7 @@ function Console() {
   const [trafficForm] = Form.useForm();
   const [msg, holder] = message.useMessage();
 
-  const refresh = async () => {
+  const refresh = async (showError = true) => {
     try {
       const [s, r, pfcp] = await Promise.all([
         api(`/api/status?release=${release}&namespace=${namespace}`),
@@ -65,7 +65,9 @@ function Console() {
       if (pfcp.available) {
         trafficForm.setFieldsValue({sessionCount: pfcp.count, teidStart: pfcp.baseId, ueStart: pfcp.ueStart});
       }
-    } catch (e: any) { msg.error(e.message); }
+    } catch (e: any) {
+      if (showError) msg.error(e.message);
+    }
   };
 
   useEffect(() => {
@@ -80,6 +82,21 @@ function Console() {
   }, []);
 
   useEffect(() => { if (config) refresh(); }, [config, release, namespace]);
+
+  useEffect(() => {
+    if (!config) return;
+    let stopped = false;
+    let timer: number;
+    const poll = async () => {
+      await refresh(false);
+      if (!stopped) timer = window.setTimeout(poll, 5000);
+    };
+    timer = window.setTimeout(poll, 5000);
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [config, release, namespace]);
 
   const run = async (fn: () => Promise<any>, ok: string) => {
     setBusy(true);
@@ -173,10 +190,9 @@ function Console() {
     <Layout>
       <Layout.Header className="header">
         <div><Typography.Title level={3}>Load-test control plane</Typography.Title><Typography.Text type="secondary">{namespace}/{release}</Typography.Text></div>
-        <Button icon={<ReloadOutlined />} onClick={refresh}>Refresh</Button>
+        <Button icon={<ReloadOutlined />} onClick={() => refresh()}>Refresh</Button>
       </Layout.Header>
       <Layout.Content className="content">
-        <Alert type="info" showIcon message={config?.chart} description="The controller pulls this public OCI chart without registry credentials." />
         <Row gutter={[16,16]} className="stats">
           <Col xs={24} md={8}><Card><Statistic title="Environment" value={status?.installed ? "Installed" : "Not installed"} valueStyle={{color: status?.installed ? "#16a34a" : "#dc2626"}} /></Card></Col>
           <Col xs={24} md={8}><Card><Statistic title="Ready pods" value={ready} suffix={`/ ${pods.length}`} /></Card></Col>
