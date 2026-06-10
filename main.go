@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.8"
+	defaultChartVersion = "0.1.9"
 	managedByLabel      = "upf-loadtest-webui"
 )
 
@@ -236,6 +236,19 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 	}
 	resetCtx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
+	upfStatefulSet := req.Release + "-travelping-upf-loadtest-upf"
+	if out, err := command(resetCtx, "kubectl", []string{
+		"rollout", "restart", "statefulset/" + upfStatefulSet, "-n", req.Namespace,
+	}, nil); err != nil {
+		writeError(w, 500, fmt.Errorf("restart UPF: %w: %s", err, out))
+		return
+	}
+	if out, err := command(resetCtx, "kubectl", []string{
+		"rollout", "status", "statefulset/" + upfStatefulSet, "-n", req.Namespace, "--timeout=120s",
+	}, nil); err != nil {
+		writeError(w, 500, fmt.Errorf("wait for UPF restart: %w: %s", err, out))
+		return
+	}
 	deployment := req.Release + "-travelping-upf-loadtest-pfcp-sim"
 	if out, err := command(resetCtx, "kubectl", []string{
 		"rollout", "restart", "deployment/" + deployment, "-n", req.Namespace,
