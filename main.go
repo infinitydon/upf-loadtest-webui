@@ -309,6 +309,21 @@ func (s *server) traffic(w http.ResponseWriter, r *http.Request) {
 		))
 		return
 	}
+	resetCtx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	statefulSet := req.Release + "-travelping-upf-loadtest-trex"
+	if out, err := command(resetCtx, "kubectl", []string{
+		"rollout", "restart", "statefulset/" + statefulSet, "-n", req.Namespace,
+	}, nil); err != nil {
+		writeError(w, 500, fmt.Errorf("restart TRex server: %w: %s", err, out))
+		return
+	}
+	if out, err := command(resetCtx, "kubectl", []string{
+		"rollout", "status", "statefulset/" + statefulSet, "-n", req.Namespace, "--timeout=120s",
+	}, nil); err != nil {
+		writeError(w, 500, fmt.Errorf("wait for TRex server restart: %w: %s", err, out))
+		return
+	}
 	name := runName("trex")
 	service := req.Release + "-travelping-upf-loadtest-trex-rpc"
 	node := s.workloadNode(r.Context(), req.Namespace, req.Release, "trex")

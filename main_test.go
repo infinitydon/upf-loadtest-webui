@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -133,6 +134,22 @@ func TestTrafficScriptBoundsGeneratorPressure(t *testing.T) {
 	for _, fragment := range required {
 		if !strings.Contains(trafficScript, fragment) {
 			t.Errorf("traffic script is missing %q", fragment)
+		}
+	}
+}
+
+func TestTrafficHandlerRestartsTRexServer(t *testing.T) {
+	required := []string{
+		`"rollout", "restart", "statefulset/" + statefulSet`,
+		`"rollout", "status", "statefulset/" + statefulSet`,
+	}
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range required {
+		if !strings.Contains(string(source), fragment) {
+			t.Errorf("traffic handler is missing %q", fragment)
 		}
 	}
 }
