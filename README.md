@@ -35,7 +35,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.0 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'

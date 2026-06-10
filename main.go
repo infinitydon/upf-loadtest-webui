@@ -133,7 +133,7 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 		"upgrade", "--install", req.Release, defaultChart,
 		"--version", req.ChartVersion, "--namespace", req.Namespace, "--create-namespace",
 		"--wait", "--timeout", "12m",
-		"--atomic", "--reset-values",
+		"--rollback-on-failure", "--reset-values",
 		"--set-string", "namespace.name=" + req.Namespace,
 		"--set-string", "global.namespace=" + req.Namespace,
 		"--set-string", "global.targetNode=" + req.TargetNode,

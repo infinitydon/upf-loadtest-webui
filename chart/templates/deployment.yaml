@@ -25,6 +25,14 @@ spec:
             - name: http
               containerPort: 8080
           env:
+            - name: HOME
+              value: /tmp
+            - name: HELM_CACHE_HOME
+              value: /tmp/helm/cache
+            - name: HELM_CONFIG_HOME
+              value: /tmp/helm/config
+            - name: HELM_DATA_HOME
+              value: /tmp/helm/data
             - name: DEFAULT_RELEASE
               value: {{ .Values.defaults.release | quote }}
             - name: DEFAULT_NAMESPACE
