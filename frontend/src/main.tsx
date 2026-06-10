@@ -312,12 +312,43 @@ function Console() {
         </Card></Col>
       </Row>
       {trafficResult && <Card size="small" title="TRex result" className="result-card">
-        <Row gutter={16}>
-          <Col span={6}><Statistic title="TX packets" value={trafficResult.tx_packets}/></Col>
-          <Col span={6}><Statistic title="RX packets" value={trafficResult.rx_packets}/></Col>
-          <Col span={6}><Statistic title="Loss" value={trafficResult.loss_percent} suffix="%"/></Col>
-          <Col span={6}><Statistic title="Verdict" value={trafficResult.passed?"PASS":"FAIL"} valueStyle={{color:trafficResult.passed?"#16a34a":"#dc2626"}}/></Col>
+        <Alert type={trafficResult.passed?"success":"error"} showIcon
+          message={trafficResult.passed?"Load test passed":"Load test failed"} description={trafficResult.reason}/>
+        <Row gutter={[16,16]} className="result-grid">
+          <Col xs={12} lg={6}><Statistic title="Verdict" value={trafficResult.passed?"PASS":"FAIL"} valueStyle={{color:trafficResult.passed?"#16a34a":"#dc2626"}}/></Col>
+          <Col xs={12} lg={6}><Statistic title="Loss" value={trafficResult.loss_percent} precision={4} suffix="%"/></Col>
+          <Col xs={12} lg={6}><Statistic title="TX packets" value={trafficResult.tx_packets}/></Col>
+          <Col xs={12} lg={6}><Statistic title="RX packets" value={trafficResult.rx_packets}/></Col>
+          <Col xs={12} lg={6}><Statistic title="Actual TX rate" value={trafficResult.actual_tx_pps} precision={0} suffix="pps"/></Col>
+          <Col xs={12} lg={6}><Statistic title="Actual RX rate" value={trafficResult.actual_rx_pps} precision={0} suffix="pps"/></Col>
+          <Col xs={12} lg={6}><Statistic title="TX wire rate" value={trafficResult.tx_l1_mbps} precision={2} suffix="Mbps"/></Col>
+          <Col xs={12} lg={6}><Statistic title="RX wire rate" value={trafficResult.rx_l1_mbps} precision={2} suffix="Mbps"/></Col>
+          <Col xs={12} lg={6}><Statistic title="Lost packets" value={trafficResult.lost_packets}/></Col>
+          <Col xs={12} lg={6}><Statistic title="Peak TRex CPU" value={trafficResult.peak_cpu_percent} precision={1} suffix="%"/></Col>
+          <Col xs={12} lg={6}><Statistic title="Port errors" value={(trafficResult.tx_errors||0)+(trafficResult.rx_errors||0)}/></Col>
+          <Col xs={12} lg={6}><Statistic title="Queue full events" value={trafficResult.queue_full||0}/></Col>
         </Row>
+        <Descriptions bordered size="small" column={2}>
+          <Descriptions.Item label="Requested profile">{trafficResult.requested_pps?.toLocaleString()} pps for {trafficResult.duration_seconds}s</Descriptions.Item>
+          <Descriptions.Item label="Frame size">{trafficResult.packet_size} bytes, excluding FCS</Descriptions.Item>
+          <Descriptions.Item label="Expected packets">{trafficResult.expected_packets?.toLocaleString()}</Descriptions.Item>
+          <Descriptions.Item label="Loss threshold">{trafficResult.max_loss_percent}%</Descriptions.Item>
+          <Descriptions.Item label="TX L2 throughput">{trafficResult.tx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
+          <Descriptions.Item label="RX L2 throughput">{trafficResult.rx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
+          <Descriptions.Item label="First threshold breach" span={2}>{trafficResult.first_loss_threshold_seconds == null ? "None" : `${trafficResult.first_loss_threshold_seconds}s`}</Descriptions.Item>
+        </Descriptions>
+        <Divider>Time-series samples</Divider>
+        <Table size="small" pagination={{pageSize:10}} scroll={{x:900}} rowKey="elapsed_seconds"
+          dataSource={trafficResult.samples || []} columns={[
+            {title:"Elapsed",dataIndex:"elapsed_seconds",render:(v)=>`${v}s`},
+            {title:"TX pps",dataIndex:"tx_pps",render:(v)=>Math.round(v||0).toLocaleString()},
+            {title:"RX pps",dataIndex:"rx_pps",render:(v)=>Math.round(v||0).toLocaleString()},
+            {title:"Cumulative loss",dataIndex:"loss_percent",render:(v)=><Tag color={v>trafficResult.max_loss_percent?"red":"green"}>{Number(v).toFixed(4)}%</Tag>},
+            {title:"TX L1",dataIndex:"tx_l1_bps",render:(v)=>`${((v||0)/1000000).toFixed(2)} Mbps`},
+            {title:"RX L1",dataIndex:"rx_l1_bps",render:(v)=>`${((v||0)/1000000).toFixed(2)} Mbps`},
+            {title:"TRex CPU",dataIndex:"cpu_util_percent",render:(v)=>`${Number(v||0).toFixed(1)}%`},
+            {title:"Errors",render:(_,r:any)=>(r.tx_errors||0)+(r.rx_errors||0)},
+          ]}/>
       </Card>}
       <Card size="small" title="Live runner output"><pre className="logs">{runDetail?.logs || `Waiting for runner output${containerWaiting ? ` (${containerWaiting})` : ""}...`}</pre></Card>
     </Drawer>

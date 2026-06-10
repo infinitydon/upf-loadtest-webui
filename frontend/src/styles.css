@@ -5,5 +5,5 @@ html,body,#root{margin:0;min-height:100%;font-family:Inter,ui-sans-serif,system-
 .chart-ref{position:absolute;bottom:20px;left:20px;right:20px;color:#8ca5aa;display:flex;flex-direction:column;gap:5px}.chart-ref code{color:#d9e7e9}
 .header{height:82px;background:#fff!important;padding:13px 28px!important;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e5e7eb}
 .header h3{margin:0!important}.content{padding:24px;max-width:1500px;width:100%;margin:auto}.stats{margin:16px 0}.ant-input-number{width:100%}.logs{white-space:pre-wrap;background:#07171a;color:#cae8e6;padding:18px;border-radius:8px;min-height:300px}
-.monitor-grid,.result-card{margin:16px 0}.session-state{margin-bottom:20px}.activity-link{height:auto;padding:0;white-space:normal;text-align:left}
+.monitor-grid,.result-card{margin:16px 0}.result-grid{margin:16px 0}.session-state{margin-bottom:20px}.activity-link{height:auto;padding:0;white-space:normal;text-align:left}
 @media(max-width:800px){.sider{display:none}.content{padding:14px}.header{padding:12px 16px!important}}
