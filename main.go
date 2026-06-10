@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -349,28 +350,27 @@ func (s *server) activeSessionState(ctx context.Context, namespace, release stri
 	if err != nil {
 		return sessionState{}, fmt.Errorf("read PFCP jobs: %w: %s", err, jobsOut)
 	}
-	return findActiveSessionState([]byte(jobsOut), []byte(podOut), release)
+	state, err := findActiveSessionState([]byte(jobsOut), []byte(podOut), release)
+	if err != nil || state.Available {
+		return state, err
+	}
+	persisted, err := s.persistedSessionState(queryCtx, namespace, release, []byte(podOut))
+	if err != nil {
+		return sessionState{}, err
+	}
+	if persisted.Available {
+		return persisted, nil
+	}
+	return state, nil
 }
 
 func findActiveSessionState(jobsJSON, podsJSON []byte, release string) (sessionState, error) {
-	var pods struct {
-		Items []struct {
-			Metadata struct {
-				CreationTimestamp time.Time `json:"creationTimestamp"`
-			} `json:"metadata"`
-		} `json:"items"`
+	simulatorStarted, found, err := simulatorStart(podsJSON)
+	if err != nil {
+		return sessionState{}, err
 	}
-	if err := json.Unmarshal(podsJSON, &pods); err != nil {
-		return sessionState{}, fmt.Errorf("decode PFCP simulator pods: %w", err)
-	}
-	if len(pods.Items) == 0 {
+	if !found {
 		return sessionState{Unavailable: "PFCP simulator pod was not found"}, nil
-	}
-	simulatorStarted := pods.Items[0].Metadata.CreationTimestamp
-	for _, pod := range pods.Items[1:] {
-		if pod.Metadata.CreationTimestamp.After(simulatorStarted) {
-			simulatorStarted = pod.Metadata.CreationTimestamp
-		}
 	}
 
 	var jobs struct {
@@ -442,6 +442,78 @@ func findActiveSessionState(jobsJSON, podsJSON []byte, release string) (sessionS
 	return active, nil
 }
 
+func simulatorStart(podsJSON []byte) (time.Time, bool, error) {
+	var pods struct {
+		Items []struct {
+			Metadata struct {
+				CreationTimestamp time.Time `json:"creationTimestamp"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(podsJSON, &pods); err != nil {
+		return time.Time{}, false, fmt.Errorf("decode PFCP simulator pods: %w", err)
+	}
+	if len(pods.Items) == 0 {
+		return time.Time{}, false, nil
+	}
+	simulatorStarted := pods.Items[0].Metadata.CreationTimestamp
+	for _, pod := range pods.Items[1:] {
+		if pod.Metadata.CreationTimestamp.After(simulatorStarted) {
+			simulatorStarted = pod.Metadata.CreationTimestamp
+		}
+	}
+	return simulatorStarted, true, nil
+}
+
+func (s *server) persistedSessionState(ctx context.Context, namespace, release string, podsJSON []byte) (sessionState, error) {
+	out, err := command(ctx, "kubectl", []string{
+		"get", "configmap", sessionStateConfigMap(release), "-n", namespace,
+		"-o", "jsonpath={.data.state\\.json}",
+	}, nil)
+	if err != nil || out == "" {
+		return sessionState{}, nil
+	}
+	var state sessionState
+	if err := json.Unmarshal([]byte(out), &state); err != nil {
+		return sessionState{}, fmt.Errorf("decode persisted PFCP state: %w", err)
+	}
+	completedAt, err := time.Parse(time.RFC3339, state.CompletedAt)
+	if err != nil {
+		return sessionState{}, nil
+	}
+	startedAt, found, err := simulatorStart(podsJSON)
+	if err != nil {
+		return sessionState{}, err
+	}
+	if !found || completedAt.Before(startedAt) {
+		return sessionState{}, nil
+	}
+	return state, nil
+}
+
+func (s *server) persistSessionState(ctx context.Context, namespace, release string, state sessionState) error {
+	body, _ := json.Marshal(state)
+	configMap := map[string]interface{}{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name": sessionStateConfigMap(release), "namespace": namespace,
+			"labels": map[string]string{"app.kubernetes.io/managed-by": managedByLabel},
+		},
+		"data": map[string]string{"state.json": string(body)},
+	}
+	manifest, _ := json.Marshal(configMap)
+	out, err := command(ctx, "kubectl", []string{"apply", "-f", "-"}, manifest)
+	if err != nil {
+		return fmt.Errorf("persist PFCP session state: %w: %s", err, out)
+	}
+	return nil
+}
+
+func sessionStateConfigMap(release string) string {
+	sum := sha256.Sum256([]byte(release))
+	return fmt.Sprintf("upf-loadtest-state-%x", sum[:8])
+}
+
 func firstAddress(cidr string) (string, error) {
 	prefix, err := netip.ParsePrefix(cidr)
 	if err != nil {
@@ -472,6 +544,10 @@ func (s *server) createJob(w http.ResponseWriter, r *http.Request, job map[strin
 }
 
 func (s *server) runs(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		s.clearRuns(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
 		return
@@ -490,6 +566,38 @@ func (s *server) runs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(out))
+}
+
+func (s *server) clearRuns(w http.ResponseWriter, r *http.Request) {
+	release, namespace := queryRelease(r)
+	if !validRelease(w, release, namespace) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	state, err := s.activeSessionState(ctx, namespace, release)
+	if err != nil {
+		writeError(w, 500, err)
+		return
+	}
+	if state.Available {
+		if err := s.persistSessionState(ctx, namespace, release, state); err != nil {
+			writeError(w, 500, err)
+			return
+		}
+	}
+	out, err := command(ctx, "kubectl", []string{
+		"delete", "jobs", "-n", namespace,
+		"-l", "app.kubernetes.io/managed-by=" + managedByLabel,
+		"--ignore-not-found=true", "--wait=false",
+	}, nil)
+	if err != nil {
+		writeCommandError(w, err, out)
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{
+		"status": "cleared", "activeSessionStatePreserved": state.Available, "output": out,
+	})
 }
 
 func (s *server) runDetail(w http.ResponseWriter, r *http.Request) {

@@ -262,7 +262,17 @@ function Console() {
               <Button type="primary" htmlType="submit" icon={<PlayCircleOutlined />} loading={busy} disabled={!status?.installed || !sessionState?.available}>Start traffic</Button>
             </Form>
           </Card> },
-          { key: "history", label: "Run history", children: <Card>
+          { key: "history", label: "Run history", children: <Card title="Run history" extra={
+            <Button danger icon={<DeleteOutlined />} disabled={!jobs.length || busy} onClick={() => Modal.confirm({
+              title:"Clear all run history?",
+              content:"This deletes every recorded PFCP and TRex Job and its logs. The active PFCP session parameters will be preserved separately.",
+              okText:"Clear history", okButtonProps:{danger:true},
+              onOk:()=>run(
+                ()=>api(`/api/runs?release=${release}&namespace=${namespace}`,{method:"DELETE"}),
+                "Run history cleared",
+              ),
+            })}>Clear run history</Button>
+          }>
             <Table dataSource={jobRows} pagination={{pageSize:10}} columns={[
               {title:"Run",dataIndex:"name"}, {title:"Type",dataIndex:"type",render:(v)=><Tag>{v}</Tag>},
               {title:"Created",dataIndex:"created"}, {title:"State",dataIndex:"state",render:(v)=><Tag color={v==="Succeeded"?"green":v==="Failed"?"red":"blue"}>{v}</Tag>},

@@ -25,6 +25,8 @@ Job with its own status, logs, cancellation, and 24-hour history.
 - Track the active PFCP session set and block TRex submissions whose session
   count, TEID base, or first UE address do not match it.
 - Reopen the monitor for historical runs and stop active runs.
+- Clear all recorded Jobs and logs while preserving the active PFCP session
+  parameters for subsequent traffic tests.
 - Navigate directly between dashboard, environment, and test runner views.
 - NodePort by default, with ClusterIP, LoadBalancer, and optional Ingress.
 - Optional bearer-token authentication from a Kubernetes Secret.
@@ -40,7 +42,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.0 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.4 \
+  --version 0.1.5 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'
