@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -117,5 +118,21 @@ func TestFindActiveSessionStateRejectsPreRestartJob(t *testing.T) {
 	}
 	if state.Available {
 		t.Fatalf("expected stale state to be unavailable: %#v", state)
+	}
+}
+
+func TestTrafficScriptBoundsGeneratorPressure(t *testing.T) {
+	required := []string{
+		"STEP Draining residual RX traffic",
+		"queue_budget=max(1000,int(expected*0.0001))",
+		"wall_deadline=started+duration+max(5.0,duration*0.10)",
+		"client.stop(ports=[0])",
+		"unclassified_budget=max(100,int(tx*0.001))",
+		`"generator_saturated":generator_saturated`,
+	}
+	for _, fragment := range required {
+		if !strings.Contains(trafficScript, fragment) {
+			t.Errorf("traffic script is missing %q", fragment)
+		}
 	}
 }

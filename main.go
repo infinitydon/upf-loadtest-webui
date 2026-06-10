@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.5"
+	defaultChartVersion = "0.1.6"
 	managedByLabel      = "upf-loadtest-webui"
 )
 
@@ -920,16 +920,33 @@ def stop(*_):
 signal.signal(signal.SIGTERM,stop)
 try:
     print("STEP Connecting to TRex server",flush=True)
-    client.connect(); client.acquire(ports=[0,1],force=True); client.reset(ports=[0,1])
+    client.connect(); client.acquire(ports=[0,1],force=True)
+    try: client.stop(ports=[0])
+    except: pass
+    client.reset(ports=[0,1])
+    print("STEP Draining residual RX traffic",flush=True)
+    drain_deadline=time.monotonic()+10.0
+    previous_drain_rx=None; stable_samples=0
+    while time.monotonic()<drain_deadline and stable_samples<2:
+        time.sleep(1.0)
+        drain_rx=client.get_stats(ports=[1])[1]["ipackets"]
+        if previous_drain_rx is not None and drain_rx==previous_drain_rx: stable_samples+=1
+        else: stable_samples=0
+        previous_drain_rx=drain_rx
+    drained_rx_packets=previous_drain_rx or 0
     print("STEP Installing GTP-U stream",flush=True)
     client.add_streams([stream],ports=[0]); client.clear_stats()
     print("STEP Transmitting traffic",flush=True)
     started=time.monotonic(); interval=max(1.0,duration/300.0); samples=[]
     previous_time=started; previous_tx=0; previous_rx=0
+    expected=pps*duration
+    queue_budget=max(1000,int(expected*0.0001))
+    wall_deadline=started+duration+max(5.0,duration*0.10)
+    saturation_reason=None
     client.start(ports=[0],mult="%spps"%pps,duration=duration)
     while client.is_traffic_active(ports=[0]):
         time.sleep(interval)
-        now=time.monotonic(); stats=client.get_stats(ports=[0,1]); elapsed=min(now-started,duration)
+        now=time.monotonic(); stats=client.get_stats(ports=[0,1]); elapsed=now-started
         tx=stats[0]["opackets"]; rx=stats[1]["ipackets"]; lost=max(tx-rx,0)
         sample_period=max(now-previous_time,0.001)
         interval_tx=max(tx-previous_tx,0); interval_rx=max(rx-previous_rx,0)
@@ -944,22 +961,37 @@ try:
         samples.append(sample)
         print("TREX_SAMPLE "+json.dumps(sample),flush=True)
         previous_time=now; previous_tx=tx; previous_rx=rx
+        if sample["queue_full"]>queue_budget:
+            saturation_reason="TRex queue pressure exceeded the run budget"
+            client.stop(ports=[0])
+            break
+        if now>wall_deadline:
+            saturation_reason="TRex did not finish within the wall-clock deadline"
+            client.stop(ports=[0])
+            break
     client.wait_on_traffic(ports=[0])
     print("STEP Collecting traffic counters",flush=True)
     stats=client.get_stats(); tx=stats[0]["opackets"]; raw_rx=stats[1]["ipackets"]
     rx=min(raw_rx,tx); unclassified_rx=max(raw_rx-tx,0); lost=max(tx-rx,0)
     loss_percent=lost*100.0/tx if tx else 100.0
-    elapsed=max(time.monotonic()-started,0.001); rate_period=max(float(duration),0.001); expected=pps*duration
+    elapsed=max(time.monotonic()-started,0.001); rate_period=elapsed
+    unclassified_budget=max(100,int(tx*0.001))
     first_bad=next((s for s in samples if s["loss_percent"]>max_loss),None)
-    if tx == 0: reason="TRex transmitted no packets"
+    queue_full=stats.get("global",{}).get("queue_full",0)
+    generator_saturated=saturation_reason is not None or queue_full>queue_budget or unclassified_rx>unclassified_budget
+    if saturation_reason: reason=saturation_reason
+    elif queue_full>queue_budget: reason="TRex queue pressure exceeded the run budget"
+    elif unclassified_rx>unclassified_budget: reason="Residual or delayed RX traffic exceeded the accounting budget"
+    elif tx == 0: reason="TRex transmitted no packets"
     elif rx == 0: reason="UPF forwarded no packets"
     elif loss_percent > max_loss and first_bad and first_bad["rx_packets"] > 0:
         reason="Forwarding degraded during the run at %.1f seconds"%first_bad["elapsed_seconds"]
     elif loss_percent > max_loss: reason="Packet loss exceeded the configured threshold"
     elif tx < expected*0.98: reason="TRex did not sustain the requested packet rate"
     else: reason="Traffic remained within the configured loss threshold"
-    passed=tx>0 and rx>0 and loss_percent<=max_loss and tx>=expected*0.98
+    passed=not generator_saturated and tx>0 and rx>0 and loss_percent<=max_loss and tx>=expected*0.98
     result={"timestamp":time.time(),"requested_pps":pps,"duration_seconds":duration,"packet_size":size,
+            "run_elapsed_seconds":elapsed,"drained_rx_packets":drained_rx_packets,
             "tx_packets":tx,"rx_packets":rx,"lost_packets":lost,"loss_percent":loss_percent,
             "max_loss_percent":max_loss,"expected_packets":expected,
             "actual_tx_pps":tx/rate_period,"actual_rx_pps":rx/rate_period,
@@ -968,8 +1000,10 @@ try:
             "tx_l1_mbps":(stats[0]["obytes"]+tx*20)*8.0/rate_period/1000000,
             "rx_l1_mbps":(stats[1]["ibytes"]+raw_rx*20)*8.0/rate_period/1000000,
             "unclassified_rx_packets":unclassified_rx,
+            "unclassified_rx_budget":unclassified_budget,
             "tx_errors":stats[0].get("oerrors",0),"rx_errors":stats[1].get("ierrors",0),
-            "queue_full":stats.get("global",{}).get("queue_full",0),
+            "queue_full":queue_full,"queue_full_budget":queue_budget,
+            "generator_saturated":generator_saturated,
             "peak_cpu_percent":max([s["cpu_util_percent"] for s in samples] or [0]),
             "first_loss_threshold_seconds":first_bad["elapsed_seconds"] if first_bad else None,
             "reason":reason,"passed":passed,"samples":samples}

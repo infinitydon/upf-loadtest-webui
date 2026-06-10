@@ -312,8 +312,9 @@ function Console() {
         </Card></Col>
       </Row>
       {trafficResult && <Card size="small" title="TRex result" className="result-card">
-        <Alert type={trafficResult.passed?"success":"error"} showIcon
-          message={trafficResult.passed?"Load test passed":"Load test failed"} description={trafficResult.reason}/>
+        <Alert type={trafficResult.passed?"success":trafficResult.generator_saturated?"warning":"error"} showIcon
+          message={trafficResult.passed?"Load test passed":trafficResult.generator_saturated?"Traffic generator saturated":"Load test failed"}
+          description={trafficResult.reason}/>
         <Row gutter={[16,16]} className="result-grid">
           <Col xs={12} lg={6}><Statistic title="Verdict" value={trafficResult.passed?"PASS":"FAIL"} valueStyle={{color:trafficResult.passed?"#16a34a":"#dc2626"}}/></Col>
           <Col xs={12} lg={6}><Statistic title="Loss" value={trafficResult.loss_percent} precision={4} suffix="%"/></Col>
@@ -328,6 +329,8 @@ function Console() {
           <Col xs={12} lg={6}><Statistic title="Peak TRex CPU" value={trafficResult.peak_cpu_percent} precision={1} suffix="%"/></Col>
           <Col xs={12} lg={6}><Statistic title="Port errors" value={(trafficResult.tx_errors||0)+(trafficResult.rx_errors||0)}/></Col>
           <Col xs={12} lg={6}><Statistic title="Queue full events" value={trafficResult.queue_full||0}/></Col>
+          <Col xs={12} lg={6}><Statistic title="Queue budget" value={trafficResult.queue_full_budget||0}/></Col>
+          <Col xs={12} lg={6}><Statistic title="Run wall time" value={trafficResult.run_elapsed_seconds||0} precision={1} suffix="s"/></Col>
         </Row>
         <Descriptions bordered size="small" column={2}>
           <Descriptions.Item label="Requested profile">{trafficResult.requested_pps?.toLocaleString()} pps for {trafficResult.duration_seconds}s</Descriptions.Item>
@@ -337,6 +340,7 @@ function Console() {
           <Descriptions.Item label="TX L2 throughput">{trafficResult.tx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
           <Descriptions.Item label="RX L2 throughput">{trafficResult.rx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
           <Descriptions.Item label="RX accounting" span={2}>RX above transmitted packets is reported separately as unclassified port traffic and is not counted as forwarded test traffic.</Descriptions.Item>
+          <Descriptions.Item label="Pre-run drain" span={2}>{(trafficResult.drained_rx_packets||0).toLocaleString()} residual packets observed before counters were cleared.</Descriptions.Item>
           <Descriptions.Item label="First threshold breach" span={2}>{trafficResult.first_loss_threshold_seconds == null ? "None" : `${trafficResult.first_loss_threshold_seconds}s`}</Descriptions.Item>
         </Descriptions>
         <Divider>Time-series samples</Divider>

@@ -6,7 +6,7 @@ injecting PFCP sessions, and running Cisco TRex GTP-U traffic.
 The controller installs the public workload chart directly from:
 
 ```text
-oci://ghcr.io/infinitydon/travelping-upf-loadtest:0.1.5
+oci://ghcr.io/infinitydon/travelping-upf-loadtest:0.1.6
 ```
 
 No GHCR credentials are required. Workload installation disables the chart's
@@ -29,6 +29,9 @@ Job with its own status, logs, cancellation, and 24-hour history.
   steps, Kubernetes events, logs, and pass/fail results.
 - Inspect TRex time-series TX/RX rates, packet loss, L1/L2 throughput,
   utilization, CPU, queue pressure, port errors, and failure onset.
+- Drain residual RX traffic before each measurement, abort runs when TRex
+  queue pressure exceeds a bounded budget, and report generator saturation
+  separately from UPF forwarding failure.
 - Track the active PFCP session set and block TRex submissions whose session
   count, TEID base, or first UE address do not match it.
 - Reopen the monitor for historical runs and stop active runs.
@@ -49,7 +52,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.0 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.11 \
+  --version 0.1.12 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'
