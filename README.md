@@ -30,7 +30,8 @@ Job with its own status, logs, cancellation, and 24-hour history.
 - Follow live scheduling, image pull, container startup, PFCP/TRex application
   steps, Kubernetes events, logs, and pass/fail results.
 - Inspect TRex time-series TX/RX rates, packet loss, L1/L2 throughput,
-  utilization, CPU, queue pressure, port errors, and failure onset.
+  aggregate and per-worker CPU utilization, queue pressure, port errors, and
+  failure onset.
 - Drain residual RX traffic before each measurement, abort runs when TRex
   queue pressure exceeds a bounded budget, and report generator saturation
   separately from UPF forwarding failure.
@@ -78,6 +79,20 @@ improvement should not be attributed to offload alone: per-session GTP-U
 source-port entropy, four receive queues, and 4,096 N3 RX descriptors were
 also required to distribute and absorb the traffic correctly.
 
+TRex still constructs, schedules, and submits every packet. Its lower CPU
+utilization with the Intel VFs is primarily the result of direct SR-IOV DMA
+and the DPDK `net_iavf` multi-queue/vector data path, rather than the NIC
+generating traffic. The GTP-U profile also changes packet fields and fixes the
+inner IPv4 checksum in the TRex VM, so checksum offload does not remove that
+per-packet work.
+
+At 1.2 Mpps, four TRex workers peaked at approximately 9-16% each. A
+two-worker A/B run also sustained 1.2 Mpps with zero queue-full events and
+20-25% peak worker utilization. Keep four workers for rate-scaling and burst
+margin. Set `trex.cpu.cores=2` with four total requested CPUs when the goal is
+to return two exclusive CPUs to Kubernetes and tests will remain near the
+current baseline.
+
 ## Build
 
 ```sh
@@ -89,7 +104,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.0 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.22 \
+  --version 0.1.23 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'

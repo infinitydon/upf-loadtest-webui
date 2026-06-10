@@ -978,6 +978,8 @@ try:
     while client.is_traffic_active(ports=[0]):
         time.sleep(interval)
         now=time.monotonic(); stats=client.get_stats(ports=[0,1]); elapsed=now-started
+        util_stats=client.get_util_stats().get("cpu",[])
+        worker_cpu=[max((entry.get("history") or [0])[-2:]) for entry in util_stats]
         tx=stats[0]["opackets"]; rx=stats[1]["ipackets"]; lost=max(tx-rx,0)
         sample_period=max(now-previous_time,0.001)
         interval_tx=max(tx-previous_tx,0); interval_rx=max(rx-previous_rx,0)
@@ -987,6 +989,7 @@ try:
                 "tx_l1_bps":stats[0].get("tx_bps_L1",0),"rx_l1_bps":stats[1].get("rx_bps_L1",0),
                 "tx_util_percent":stats[0].get("tx_util",0),"rx_util_percent":stats[1].get("rx_util",0),
                 "cpu_util_percent":stats.get("global",{}).get("cpu_util",0),
+                "peak_worker_cpu_percent":max(worker_cpu or [0]),"trex_worker_count":len(worker_cpu),
                 "queue_full":stats.get("global",{}).get("queue_full",0),
                 "tx_errors":stats[0].get("oerrors",0),"rx_errors":stats[1].get("ierrors",0)}
         samples.append(sample)
@@ -1036,6 +1039,8 @@ try:
             "queue_full":queue_full,"queue_full_budget":queue_budget,
             "generator_saturated":generator_saturated,
             "peak_cpu_percent":max([s["cpu_util_percent"] for s in samples] or [0]),
+            "peak_worker_cpu_percent":max([s["peak_worker_cpu_percent"] for s in samples] or [0]),
+            "trex_worker_count":max([s["trex_worker_count"] for s in samples] or [0]),
             "first_loss_threshold_seconds":first_bad["elapsed_seconds"] if first_bad else None,
             "reason":reason,"passed":passed,"samples":samples}
     print("TREX_RESULT "+json.dumps(result),flush=True)

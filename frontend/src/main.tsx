@@ -352,7 +352,9 @@ function Console() {
           <Col xs={12} lg={6}><Statistic title="N6 RX wire rate" value={trafficResult.rx_l1_mbps} precision={2} suffix="Mbps"/></Col>
           <Col xs={12} lg={6}><Statistic title="Lost packets" value={trafficResult.lost_packets}/></Col>
           <Col xs={12} lg={6}><Statistic title="Unclassified RX" value={trafficResult.unclassified_rx_packets||0}/></Col>
-          <Col xs={12} lg={6}><Statistic title="Peak TRex CPU" value={trafficResult.peak_cpu_percent} precision={1} suffix="%"/></Col>
+          <Col xs={12} lg={6}><Statistic title="Aggregate TRex CPU" value={trafficResult.peak_cpu_percent} precision={1} suffix="%"/></Col>
+          <Col xs={12} lg={6}><Statistic title="Peak TRex worker" value={trafficResult.peak_worker_cpu_percent||0} precision={1} suffix="%"/></Col>
+          <Col xs={12} lg={6}><Statistic title="TRex workers" value={trafficResult.trex_worker_count||0}/></Col>
           <Col xs={12} lg={6}><Statistic title="Port errors" value={(trafficResult.tx_errors||0)+(trafficResult.rx_errors||0)}/></Col>
           <Col xs={12} lg={6}><Statistic title="Queue full events" value={trafficResult.queue_full||0}/></Col>
           <Col xs={12} lg={6}><Statistic title="Queue budget" value={trafficResult.queue_full_budget||0}/></Col>
@@ -379,7 +381,8 @@ function Console() {
             {title:"Cumulative loss",dataIndex:"loss_percent",render:(v)=><Tag color={v>trafficResult.max_loss_percent?"red":"green"}>{Number(v).toFixed(4)}%</Tag>},
             {title:"N3 TX L1",dataIndex:"tx_l1_bps",render:(v)=>`${((v||0)/1000000).toFixed(2)} Mbps`},
             {title:"N6 RX L1",dataIndex:"rx_l1_bps",render:(v)=>`${((v||0)/1000000).toFixed(2)} Mbps`},
-            {title:"TRex CPU",dataIndex:"cpu_util_percent",render:(v)=>`${Number(v||0).toFixed(1)}%`},
+            {title:"TRex aggregate",dataIndex:"cpu_util_percent",render:(v)=>`${Number(v||0).toFixed(1)}%`},
+            {title:"Peak worker",dataIndex:"peak_worker_cpu_percent",render:(v)=>`${Number(v||0).toFixed(1)}%`},
             {title:"Errors",render:(_,r:any)=>(r.tx_errors||0)+(r.rx_errors||0)},
           ]}/>
       </Card>}
