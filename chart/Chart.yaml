@@ -2,8 +2,8 @@ apiVersion: v2
 name: upf-loadtest-webui
 description: Web control plane for Travelping UPF PFCP and TRex load tests
 type: application
-version: 0.1.21
-appVersion: "0.1.21"
+version: 0.1.22
+appVersion: "0.1.22"
 home: https://github.com/infinitydon/upf-loadtest-webui
 maintainers:
   - name: infinitydon

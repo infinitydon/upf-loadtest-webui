@@ -26,6 +26,15 @@ type SessionState = {
   ueStart?: string; qfi?: number; completedAt?: string; unavailableReason?: string;
 };
 
+function formatPps(value: unknown) {
+  const rate = Number(value || 0);
+  const magnitude = Math.abs(rate);
+  const formatter = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
+  if (magnitude >= 1_000_000) return `${formatter.format(rate / 1_000_000)} Mpps`;
+  if (magnitude >= 1_000) return `${formatter.format(rate / 1_000)} Kpps`;
+  return `${new Intl.NumberFormat(undefined, {maximumFractionDigits: 0}).format(rate)} pps`;
+}
+
 const getToken = () => localStorage.getItem("upfToken") || "";
 async function api(path: string, init?: RequestInit) {
   const headers = new Headers(init?.headers);
@@ -52,6 +61,7 @@ function Console() {
   const [installForm] = Form.useForm();
   const [sessionForm] = Form.useForm();
   const [trafficForm] = Form.useForm();
+  const configuredPps = Form.useWatch("pps", trafficForm);
   const [msg, holder] = message.useMessage();
 
   const refresh = async (showError = true) => {
@@ -272,7 +282,7 @@ function Console() {
             <Form form={trafficForm} layout="vertical" initialValues={{pps:100000,duration:15,packetSize:96,sessionCount:1000,teidStart:1,teidStep:10,ueStart:"48.0.0.1",innerDst:"10.0.5.1",maxLossPercent:0.1}}
               onFinish={(v)=>startTrackedRun("/api/traffic",v,"traffic")}>
               <Row gutter={16}>
-                <Col xs={12} md={6}><Form.Item name="pps" label="Packets / second"><InputNumber min={1}/></Form.Item></Col>
+                <Col xs={12} md={6}><Form.Item name="pps" label="Packets per second" extra={`Configured rate: ${formatPps(configuredPps)}`}><InputNumber min={1}/></Form.Item></Col>
                 <Col xs={12} md={6}><Form.Item name="duration" label="Duration (seconds)"><InputNumber min={1} max={86400}/></Form.Item></Col>
                 <Col xs={12} md={6}><Form.Item name="packetSize" label="Frame size (no FCS)"><InputNumber min={78} max={9000}/></Form.Item></Col>
                 <Col xs={12} md={6}><Form.Item name="sessionCount" label="Session count"><InputNumber min={1}/></Form.Item></Col>
@@ -336,10 +346,10 @@ function Console() {
           <Col xs={12} lg={6}><Statistic title="Loss" value={trafficResult.loss_percent} precision={4} suffix="%"/></Col>
           <Col xs={12} lg={6}><Statistic title="TX packets" value={trafficResult.tx_packets}/></Col>
           <Col xs={12} lg={6}><Statistic title="RX packets" value={trafficResult.rx_packets}/></Col>
-          <Col xs={12} lg={6}><Statistic title="Actual TX rate" value={trafficResult.actual_tx_pps} precision={0} suffix="pps"/></Col>
-          <Col xs={12} lg={6}><Statistic title="Actual RX rate" value={trafficResult.actual_rx_pps} precision={0} suffix="pps"/></Col>
-          <Col xs={12} lg={6}><Statistic title="TX wire rate" value={trafficResult.tx_l1_mbps} precision={2} suffix="Mbps"/></Col>
-          <Col xs={12} lg={6}><Statistic title="RX wire rate" value={trafficResult.rx_l1_mbps} precision={2} suffix="Mbps"/></Col>
+          <Col xs={12} lg={6}><Statistic title="Actual TX rate" value={formatPps(trafficResult.actual_tx_pps)}/></Col>
+          <Col xs={12} lg={6}><Statistic title="Actual RX rate" value={formatPps(trafficResult.actual_rx_pps)}/></Col>
+          <Col xs={12} lg={6}><Statistic title="N3 TX wire rate" value={trafficResult.tx_l1_mbps} precision={2} suffix="Mbps"/></Col>
+          <Col xs={12} lg={6}><Statistic title="N6 RX wire rate" value={trafficResult.rx_l1_mbps} precision={2} suffix="Mbps"/></Col>
           <Col xs={12} lg={6}><Statistic title="Lost packets" value={trafficResult.lost_packets}/></Col>
           <Col xs={12} lg={6}><Statistic title="Unclassified RX" value={trafficResult.unclassified_rx_packets||0}/></Col>
           <Col xs={12} lg={6}><Statistic title="Peak TRex CPU" value={trafficResult.peak_cpu_percent} precision={1} suffix="%"/></Col>
@@ -349,12 +359,13 @@ function Console() {
           <Col xs={12} lg={6}><Statistic title="Run wall time" value={trafficResult.run_elapsed_seconds||0} precision={1} suffix="s"/></Col>
         </Row>
         <Descriptions bordered size="small" column={2}>
-          <Descriptions.Item label="Requested profile">{trafficResult.requested_pps?.toLocaleString()} pps for {trafficResult.duration_seconds}s</Descriptions.Item>
+          <Descriptions.Item label="Requested profile">{formatPps(trafficResult.requested_pps)} for {trafficResult.duration_seconds}s</Descriptions.Item>
           <Descriptions.Item label="Frame size">{trafficResult.packet_size} bytes, excluding FCS</Descriptions.Item>
           <Descriptions.Item label="Expected packets">{trafficResult.expected_packets?.toLocaleString()}</Descriptions.Item>
           <Descriptions.Item label="Loss threshold">{trafficResult.max_loss_percent}%</Descriptions.Item>
-          <Descriptions.Item label="TX L2 throughput">{trafficResult.tx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
-          <Descriptions.Item label="RX L2 throughput">{trafficResult.rx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
+          <Descriptions.Item label="N3 TX L2 throughput">{trafficResult.tx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
+          <Descriptions.Item label="N6 RX L2 throughput">{trafficResult.rx_l2_mbps?.toFixed(2)} Mbps</Descriptions.Item>
+          <Descriptions.Item label="Wire-rate comparison" span={2}>N3 TX includes outer IPv4, UDP, and GTP-U headers. N6 RX is measured after the UPF removes that 36-byte encapsulation, so its Mbps value is normally lower at the same packet rate.</Descriptions.Item>
           <Descriptions.Item label="RX accounting" span={2}>RX above transmitted packets is reported separately as unclassified port traffic and is not counted as forwarded test traffic.</Descriptions.Item>
           <Descriptions.Item label="Pre-run drain" span={2}>{(trafficResult.drained_rx_packets||0).toLocaleString()} residual packets observed before counters were cleared.</Descriptions.Item>
           <Descriptions.Item label="First threshold breach" span={2}>{trafficResult.first_loss_threshold_seconds == null ? "None" : `${trafficResult.first_loss_threshold_seconds}s`}</Descriptions.Item>
@@ -363,11 +374,11 @@ function Console() {
         <Table size="small" pagination={{pageSize:10}} scroll={{x:900}} rowKey="elapsed_seconds"
           dataSource={trafficResult.samples || []} columns={[
             {title:"Elapsed",dataIndex:"elapsed_seconds",render:(v)=>`${v}s`},
-            {title:"TX pps",dataIndex:"tx_pps",render:(v)=>Math.round(v||0).toLocaleString()},
-            {title:"RX pps",dataIndex:"rx_pps",render:(v)=>Math.round(v||0).toLocaleString()},
+            {title:"TX rate",dataIndex:"tx_pps",render:(v)=>formatPps(v)},
+            {title:"RX rate",dataIndex:"rx_pps",render:(v)=>formatPps(v)},
             {title:"Cumulative loss",dataIndex:"loss_percent",render:(v)=><Tag color={v>trafficResult.max_loss_percent?"red":"green"}>{Number(v).toFixed(4)}%</Tag>},
-            {title:"TX L1",dataIndex:"tx_l1_bps",render:(v)=>`${((v||0)/1000000).toFixed(2)} Mbps`},
-            {title:"RX L1",dataIndex:"rx_l1_bps",render:(v)=>`${((v||0)/1000000).toFixed(2)} Mbps`},
+            {title:"N3 TX L1",dataIndex:"tx_l1_bps",render:(v)=>`${((v||0)/1000000).toFixed(2)} Mbps`},
+            {title:"N6 RX L1",dataIndex:"rx_l1_bps",render:(v)=>`${((v||0)/1000000).toFixed(2)} Mbps`},
             {title:"TRex CPU",dataIndex:"cpu_util_percent",render:(v)=>`${Number(v||0).toFixed(1)}%`},
             {title:"Errors",render:(_,r:any)=>(r.tx_errors||0)+(r.rx_errors||0)},
           ]}/>

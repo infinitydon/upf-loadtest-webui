@@ -24,6 +24,8 @@ Job with its own status, logs, cancellation, and 24-hour history.
   sessions as active or allowing a TRex run.
 - Configure TRex PPS, duration, Ethernet frame size (excluding FCS), UE count,
   TEID range, and inner destination.
+- Display packet rates automatically as `pps`, `Kpps`, or `Mpps` in traffic
+  settings, run summaries, and time-series reports.
 - Display workload pod readiness and test Job history.
 - Follow live scheduling, image pull, container startup, PFCP/TRex application
   steps, Kubernetes events, logs, and pass/fail results.
@@ -44,6 +46,38 @@ Job with its own status, logs, cancellation, and 24-hour history.
 - NodePort by default, with ClusterIP, LoadBalancer, and optional Ingress.
 - Optional bearer-token authentication from a Kubernetes Secret.
 
+## Interpreting traffic results
+
+The configured frame size is the outer N3 Ethernet frame without its 4-byte
+FCS. For uplink traffic, the UPF removes 36 bytes of outer IPv4, UDP, and
+GTP-U headers before transmitting the packet on N6. A 96-byte N3 frame
+therefore becomes approximately a 60-byte N6 frame.
+
+The dashboard labels these measurements as N3 TX and N6 RX. Their packet rates
+should be nearly equal for forwarded traffic, but their L1 and L2 bandwidths
+are not expected to be equal because they measure differently sized frames.
+For example, 1.2 Mpps of 96-byte N3 traffic is approximately 1,152 Mbps at L1,
+while the decapsulated 60-byte N6 traffic is approximately 768 Mbps at L1.
+Use packet counts and the reported loss percentage for the end-to-end
+forwarding comparison.
+
+## NIC performance
+
+On this test node, Intel 700 Series SR-IOV VFs backed by physical NICs were
+materially more performant than the previous Proxmox/QEMU virtio-net path.
+The virtio setup repeatedly saturated the TRex generator during a
+600 Kpps, 300-second run. After moving the UPF and TRex traffic interfaces to
+Intel VFs, a 1.2 Mpps, 300-second run completed with zero TRex queue-full
+events and low packet loss.
+
+VPP confirms that these VFs use its DPDK `iAVF` driver. Active receive
+features include RSS, IPv4 checksum verification, and scatter; active
+transmit offloads include IPv4, UDP, and TCP checksums plus multi-segment
+transmit. These are real hardware-backed DPDK offloads, but the measured
+improvement should not be attributed to offload alone: per-session GTP-U
+source-port entropy, four receive queues, and 4,096 N3 RX descriptors were
+also required to distribute and absorb the traffic correctly.
+
 ## Build
 
 ```sh
@@ -55,7 +89,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.0 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.21 \
+  --version 0.1.22 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'
