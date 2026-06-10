@@ -979,7 +979,7 @@ try:
         time.sleep(interval)
         now=time.monotonic(); stats=client.get_stats(ports=[0,1]); elapsed=now-started
         util_stats=client.get_util_stats().get("cpu",[])
-        worker_cpu=[max((entry.get("history") or [0])[-2:]) for entry in util_stats]
+        worker_cpu=[max(entry.get("history") or [0]) for entry in util_stats]
         tx=stats[0]["opackets"]; rx=stats[1]["ipackets"]; lost=max(tx-rx,0)
         sample_period=max(now-previous_time,0.001)
         interval_tx=max(tx-previous_tx,0); interval_rx=max(rx-previous_rx,0)
