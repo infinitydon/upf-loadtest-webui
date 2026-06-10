@@ -1,5 +1,5 @@
 IMAGE ?= ghcr.io/infinitydon/upf-loadtest-webui
-TAG ?= v0.1.0
+TAG ?= v0.1.25
 
 .PHONY: build test image
 build:

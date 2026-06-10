@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.13"
+	defaultChartVersion = "0.1.14"
 	managedByLabel      = "upf-loadtest-webui"
 )
 
@@ -30,8 +30,10 @@ var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 var upfSessionCount = regexp.MustCompile(`Sessions:\s+([0-9]+)`)
 
 type server struct {
-	staticDir string
-	token     string
+	staticDir      string
+	token          string
+	trexImage      string
+	trexInstallDir string
 }
 
 type releaseRequest struct {
@@ -86,7 +88,12 @@ type deleteRequest struct {
 
 func main() {
 	addr := env("LISTEN_ADDR", ":8080")
-	s := &server{staticDir: env("STATIC_DIR", "/app/static"), token: os.Getenv("AUTH_TOKEN")}
+	s := &server{
+		staticDir:      env("STATIC_DIR", "/app/static"),
+		token:          os.Getenv("AUTH_TOKEN"),
+		trexImage:      env("TREX_IMAGE", "ghcr.io/infinitydon/trex:v3.08"),
+		trexInstallDir: env("TREX_INSTALL_DIR", "/opt/trex/v3.08"),
+	}
 	log.Printf("listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, s.routes()))
 }
@@ -340,9 +347,9 @@ func (s *server) traffic(w http.ResponseWriter, r *http.Request) {
 	name := runName("trex")
 	service := req.Release + "-travelping-upf-loadtest-trex-rpc"
 	node := s.workloadNode(r.Context(), req.Namespace, req.Release, "trex")
-	job := jobManifest(name, req.Namespace, "traffic", "eisai/cisco-trex:v3.06", node,
-		[]string{"/bin/bash", "-c", trafficScript}, map[string]string{
-			"PYTHONPATH":  "/opt/trex/v3.06/automation/trex_control_plane/interactive",
+	job := jobManifest(name, req.Namespace, "traffic", s.trexImage, node,
+		[]string{"/bin/bash", "-c", strings.ReplaceAll(trafficScript, "${TREX_INSTALL_DIR}", s.trexInstallDir)}, map[string]string{
+			"PYTHONPATH":  s.trexInstallDir + "/automation/trex_control_plane/interactive",
 			"TREX_SERVER": service, "PPS": strconv.Itoa(req.PPS), "DURATION": strconv.Itoa(req.Duration),
 			"PACKET_SIZE": strconv.Itoa(req.PacketSize), "SESSION_COUNT": strconv.Itoa(req.SessionCnt),
 			"TEID_START": strconv.Itoa(req.TEIDStart), "TEID_STEP": strconv.Itoa(req.TEIDStep),
@@ -1048,5 +1055,5 @@ try:
 finally:
     if client.is_connected(): client.disconnect()
 PY
-cd /opt/trex/v3.06
+cd "${TREX_INSTALL_DIR}"
 exec python3 /tmp/run.py`
