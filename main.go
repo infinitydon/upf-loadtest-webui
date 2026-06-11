@@ -22,7 +22,7 @@ import (
 
 const (
 	defaultChart        = "oci://ghcr.io/infinitydon/travelping-upf-loadtest"
-	defaultChartVersion = "0.1.14"
+	defaultChartVersion = "0.1.15"
 	managedByLabel      = "upf-loadtest-webui"
 )
 
@@ -34,6 +34,7 @@ type server struct {
 	token          string
 	trexImage      string
 	trexInstallDir string
+	chartVersion   string
 }
 
 type releaseRequest struct {
@@ -93,6 +94,7 @@ func main() {
 		token:          os.Getenv("AUTH_TOKEN"),
 		trexImage:      env("TREX_IMAGE", "ghcr.io/infinitydon/trex:v3.08"),
 		trexInstallDir: env("TREX_INSTALL_DIR", "/opt/trex/v3.08"),
+		chartVersion:   env("WORKLOAD_CHART_VERSION", defaultChartVersion),
 	}
 	log.Printf("listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, s.routes()))
@@ -128,7 +130,7 @@ func (s *server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *server) config(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]interface{}{
-		"chart": defaultChart, "chartVersion": defaultChartVersion,
+		"chart": defaultChart, "chartVersion": s.workloadChartVersion(),
 		"defaultRelease":        env("DEFAULT_RELEASE", "upf-loadtest"),
 		"defaultNamespace":      env("DEFAULT_NAMESPACE", "upf-loadtest"),
 		"authenticationEnabled": s.token != "",
@@ -145,7 +147,7 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.ChartVersion == "" {
-		req.ChartVersion = defaultChartVersion
+		req.ChartVersion = s.workloadChartVersion()
 	}
 	if req.TargetNode == "" {
 		writeError(w, 400, errors.New("targetNode is required"))
@@ -173,7 +175,9 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 		writeCommandError(w, err, out)
 		return
 	}
-	writeJSON(w, 200, map[string]string{"status": "installed", "output": out})
+	writeJSON(w, 200, map[string]string{
+		"status": "installed", "chartVersion": req.ChartVersion, "output": out,
+	})
 }
 
 func (s *server) uninstall(w http.ResponseWriter, r *http.Request) {
@@ -788,12 +792,19 @@ func (s *server) stop(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	out, err := command(ctx, "kubectl", []string{"delete", "job", name, "-n", namespace, "--wait=false"}, nil)
+	out, err := command(ctx, "kubectl", stopJobArgs(namespace, name), nil)
 	if err != nil {
 		writeCommandError(w, err, out)
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "stopped", "output": out})
+}
+
+func stopJobArgs(namespace, name string) []string {
+	return []string{
+		"delete", "job", name, "-n", namespace,
+		"--ignore-not-found=true", "--wait=false",
+	}
 }
 
 func (s *server) static(w http.ResponseWriter, r *http.Request) {
@@ -918,6 +929,13 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func (s *server) workloadChartVersion() string {
+	if s.chartVersion != "" {
+		return s.chartVersion
+	}
+	return defaultChartVersion
 }
 
 func requestLog(next http.Handler) http.Handler {

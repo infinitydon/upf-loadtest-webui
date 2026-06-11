@@ -37,6 +37,8 @@ spec:
               value: {{ .Values.defaults.release | quote }}
             - name: DEFAULT_NAMESPACE
               value: {{ .Values.defaults.namespace | quote }}
+            - name: WORKLOAD_CHART_VERSION
+              value: {{ .Values.defaults.chartVersion | quote }}
             - name: TREX_IMAGE
               value: {{ .Values.trex.image | quote }}
             - name: TREX_INSTALL_DIR

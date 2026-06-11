@@ -35,6 +35,11 @@ function formatPps(value: unknown) {
   return `${new Intl.NumberFormat(undefined, {maximumFractionDigits: 0}).format(rate)} pps`;
 }
 
+function installedChartVersion(chart: unknown) {
+  const match = String(chart || "").match(/-(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/);
+  return match?.[1];
+}
+
 const getToken = () => localStorage.getItem("upfToken") || "";
 async function api(path: string, init?: RequestInit) {
   const headers = new Headers(init?.headers);
@@ -115,7 +120,20 @@ function Console() {
     finally { setBusy(false); }
   };
 
+  const stopRun = async (name: string) => {
+    const result = await run(
+      () => api(`/api/runs/stop?namespace=${namespace}&name=${name}`, {method:"DELETE"}),
+      "Run stopped",
+    );
+    if (result) {
+      setRunOpen(false);
+      setActiveRun(undefined);
+      setRunDetail(undefined);
+    }
+  };
+
   const pods = status?.pods?.items || [];
+  const activeChartVersion = installedChartVersion(status?.helm?.chart) || config?.chartVersion;
   const ready = pods.filter((p: any) => p.status?.containerStatuses?.every((c: any) => c.ready)).length;
   const jobRows = useMemo(() => jobs.map((j) => ({
     key: j.metadata.name, name: j.metadata.name, type: j.metadata.labels?.["loadtest.infinitydon.io/type"] || "run",
@@ -195,7 +213,7 @@ function Console() {
           {key:"environment", icon:<CloudServerOutlined />, label:"Environment"},
           {key:"runners", icon:<PlayCircleOutlined />, label:"Test runners"},
         ]} />
-      <div className="chart-ref"><small>Workload chart</small><code>{config?.chartVersion || "..."}</code></div>
+      <div className="chart-ref"><small>Workload chart</small><code>{activeChartVersion || "..."}</code></div>
     </Layout.Sider>
     <Layout>
       <Layout.Header className="header">
@@ -215,7 +233,7 @@ function Console() {
                 <Descriptions.Item label="Release">{namespace}/{release}</Descriptions.Item>
                 <Descriptions.Item label="Status"><Tag color={status?.installed ? "green" : "red"}>{status?.helm?.info?.status || "not installed"}</Tag></Descriptions.Item>
                 <Descriptions.Item label="Workload pods">{ready} of {pods.length} ready</Descriptions.Item>
-                <Descriptions.Item label="OCI chart">{config?.chart}:{config?.chartVersion}</Descriptions.Item>
+                <Descriptions.Item label="OCI chart">{config?.chart}:{activeChartVersion}</Descriptions.Item>
               </Descriptions>
             </Card></Col>
             <Col xs={24} lg={10}><Card title="Recent activity">
@@ -228,7 +246,11 @@ function Console() {
           { key: "environment", label: "Environment", children: <Card>
             <Form form={installForm} layout="vertical" onFinish={(v) => {
               setRelease(v.release); setNamespace(v.namespace);
-              run(() => api("/api/release/install", {method:"POST", body:JSON.stringify(v)}), "Environment installed");
+              run(async () => {
+                const result = await api("/api/release/install", {method:"POST", body:JSON.stringify(v)});
+                installForm.setFieldValue("chartVersion", result.chartVersion);
+                return result;
+              }, "Environment installed");
             }}>
               <Row gutter={16}>
                 <Col xs={24} md={6}><Form.Item name="release" label="Release" rules={[{required:true}]}><Input /></Form.Item></Col>
@@ -310,7 +332,7 @@ function Console() {
               {title:"Run",dataIndex:"name"}, {title:"Type",dataIndex:"type",render:(v)=><Tag>{v}</Tag>},
               {title:"Created",dataIndex:"created"}, {title:"State",dataIndex:"state",render:(v)=><Tag color={v==="Succeeded"?"green":v==="Failed"?"red":"blue"}>{v}</Tag>},
               {title:"Actions",render:(_,row:any)=><Space><Button size="small" icon={<UnorderedListOutlined/>} onClick={()=>monitorRun(row.name,row.type)}>Monitor</Button>
-                {row.state==="Running"&&<Button danger size="small" icon={<StopOutlined />} onClick={()=>run(()=>api(`/api/runs/stop?namespace=${namespace}&name=${row.name}`,{method:"DELETE"}),"Run stopped")}>Stop</Button>}</Space>}
+                {row.state==="Running"&&<Button danger size="small" icon={<StopOutlined />} onClick={()=>stopRun(row.name)}>Stop</Button>}</Space>}
             ]} />
           </Card> },
         ]} />
@@ -318,7 +340,7 @@ function Console() {
     </Layout>
     <Drawer title={<Space><span>Run monitor</span>{activeRun && <Tag>{activeRun.name}</Tag>}<Tag color={runState==="Succeeded"?"green":runState==="Failed"?"red":"blue"}>{runState}</Tag></Space>}
       open={runOpen} width="75%" onClose={()=>setRunOpen(false)}
-      extra={runState==="Running" && activeRun ? <Button danger icon={<StopOutlined/>} onClick={()=>run(()=>api(`/api/runs/stop?namespace=${namespace}&name=${activeRun.name}`,{method:"DELETE"}),"Run stopped")}>Stop</Button> : null}>
+      extra={runState==="Running" && activeRun ? <Button danger icon={<StopOutlined/>} onClick={()=>stopRun(activeRun.name)}>Stop</Button> : null}>
       <Progress percent={Math.round(progress)} status={runState==="Failed"?"exception":runState==="Succeeded"?"success":"active"} />
       <Row gutter={[16,16]} className="monitor-grid">
         <Col xs={24} lg={10}><Card size="small" title="Execution sequence">

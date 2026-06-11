@@ -33,6 +33,26 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestConfigUsesConfiguredWorkloadChartVersion(t *testing.T) {
+	s := &server{staticDir: t.TempDir(), chartVersion: "0.1.99"}
+	request := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	response := httptest.NewRecorder()
+	s.routes().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), `"chartVersion":"0.1.99"`) {
+		t.Fatalf("configured chart version missing from response: %s", response.Body.String())
+	}
+}
+
+func TestStopJobArgsIgnoreMissingJobs(t *testing.T) {
+	args := strings.Join(stopJobArgs("upf-loadtest", "trex-test"), " ")
+	if !strings.Contains(args, "--ignore-not-found=true") {
+		t.Fatalf("stop must be idempotent, got args: %s", args)
+	}
+}
+
 func TestAuth(t *testing.T) {
 	s := &server{staticDir: t.TempDir(), token: "secret"}
 	request := httptest.NewRequest(http.MethodGet, "/api/config", nil)
