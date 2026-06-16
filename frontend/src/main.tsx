@@ -4,7 +4,7 @@ import { Refine } from "@refinedev/core";
 import {
   Alert, App as AntApp, Button, Card, Col, ConfigProvider, Descriptions, Divider, Drawer,
   Empty, Form, Input, InputNumber, Layout, Menu, Modal, Progress, Row, Space, Statistic,
-  Table, Tabs, Tag, Timeline, Typography, message, theme,
+  Switch, Table, Tabs, Tag, Timeline, Typography, message, theme,
 } from "antd";
 import {
   CloudServerOutlined, DashboardOutlined, DeleteOutlined, PlayCircleOutlined,
@@ -13,7 +13,7 @@ import {
 import "antd/dist/reset.css";
 import "./styles.css";
 
-type Config = { chart: string; chartVersion: string; defaultRelease: string; defaultNamespace: string; authenticationEnabled: boolean };
+type Config = { chart: string; chartVersion: string; defaultRelease: string; defaultNamespace: string; monitoringEnabled: boolean; authenticationEnabled: boolean };
 type Job = { metadata: { name: string; creationTimestamp: string; labels?: Record<string,string> }; status?: { active?: number; succeeded?: number; failed?: number } };
 type RunDetail = {
   job?: any;
@@ -88,7 +88,13 @@ function Console() {
   useEffect(() => {
     api("/api/config").then((c: Config) => {
       setConfig(c); setRelease(c.defaultRelease); setNamespace(c.defaultNamespace);
-      installForm.setFieldsValue({ release: c.defaultRelease, namespace: c.defaultNamespace, chartVersion: c.chartVersion, targetNode: "ebpf-bng-node-01" });
+      installForm.setFieldsValue({
+        release: c.defaultRelease,
+        namespace: c.defaultNamespace,
+        chartVersion: c.chartVersion,
+        targetNode: "ebpf-bng-node-01",
+        monitoringEnabled: c.monitoringEnabled,
+      });
     }).catch((e) => {
       const token = window.prompt("API token");
       if (token) { localStorage.setItem("upfToken", token); window.location.reload(); }
@@ -257,6 +263,7 @@ function Console() {
                 <Col xs={24} md={6}><Form.Item name="namespace" label="Namespace" rules={[{required:true}]}><Input /></Form.Item></Col>
                 <Col xs={24} md={6}><Form.Item name="chartVersion" label="Chart version" rules={[{required:true}]}><Input /></Form.Item></Col>
                 <Col xs={24} md={6}><Form.Item name="targetNode" label="Target node" rules={[{required:true}]}><Input /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="monitoringEnabled" label="Prometheus/Grafana resources" valuePropName="checked"><Switch checkedChildren="Enabled" unCheckedChildren="Disabled" /></Form.Item></Col>
               </Row>
               <Space><Button type="primary" htmlType="submit" loading={busy}>Install / upgrade</Button>
                 <Button danger icon={<DeleteOutlined />} disabled={!status?.installed || busy} onClick={() => Modal.confirm({

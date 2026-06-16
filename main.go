@@ -35,13 +35,15 @@ type server struct {
 	trexImage      string
 	trexInstallDir string
 	chartVersion   string
+	monitoring     bool
 }
 
 type releaseRequest struct {
-	Release      string `json:"release"`
-	Namespace    string `json:"namespace"`
-	ChartVersion string `json:"chartVersion"`
-	TargetNode   string `json:"targetNode"`
+	Release           string `json:"release"`
+	Namespace         string `json:"namespace"`
+	ChartVersion      string `json:"chartVersion"`
+	TargetNode        string `json:"targetNode"`
+	MonitoringEnabled *bool  `json:"monitoringEnabled"`
 }
 
 type sessionRequest struct {
@@ -95,6 +97,7 @@ func main() {
 		trexImage:      env("TREX_IMAGE", "ghcr.io/infinitydon/trex:v3.08"),
 		trexInstallDir: env("TREX_INSTALL_DIR", "/opt/trex/v3.08"),
 		chartVersion:   env("WORKLOAD_CHART_VERSION", defaultChartVersion),
+		monitoring:     envBool("WORKLOAD_MONITORING_ENABLED", true),
 	}
 	log.Printf("listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, s.routes()))
@@ -133,6 +136,7 @@ func (s *server) config(w http.ResponseWriter, _ *http.Request) {
 		"chart": defaultChart, "chartVersion": s.workloadChartVersion(),
 		"defaultRelease":        env("DEFAULT_RELEASE", "upf-loadtest"),
 		"defaultNamespace":      env("DEFAULT_NAMESPACE", "upf-loadtest"),
+		"monitoringEnabled":     s.monitoring,
 		"authenticationEnabled": s.token != "",
 	})
 }
@@ -153,6 +157,10 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, errors.New("targetNode is required"))
 		return
 	}
+	monitoringEnabled := s.monitoring
+	if req.MonitoringEnabled != nil {
+		monitoringEnabled = *req.MonitoringEnabled
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
 	args := []string{
@@ -169,6 +177,7 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 		"--set", "pfcpSim.sessionCreator.enabled=false",
 		"--set", "trex.test.enabled=false",
 		"--set", "global.imagePullSecrets=null",
+		"--set", "monitoring.enabled=" + strconv.FormatBool(monitoringEnabled),
 	}
 	out, err := command(ctx, "helm", args, nil)
 	if err != nil {
@@ -929,6 +938,20 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch value {
+	case "":
+		return fallback
+	case "1", "t", "true", "yes", "y", "on":
+		return true
+	case "0", "f", "false", "no", "n", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func (s *server) workloadChartVersion() string {

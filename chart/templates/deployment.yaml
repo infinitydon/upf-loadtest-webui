@@ -39,6 +39,8 @@ spec:
               value: {{ .Values.defaults.namespace | quote }}
             - name: WORKLOAD_CHART_VERSION
               value: {{ .Values.defaults.chartVersion | quote }}
+            - name: WORKLOAD_MONITORING_ENABLED
+              value: {{ .Values.defaults.monitoringEnabled | quote }}
             - name: TREX_IMAGE
               value: {{ .Values.trex.image | quote }}
             - name: TREX_INSTALL_DIR

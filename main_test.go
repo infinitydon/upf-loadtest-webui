@@ -53,6 +53,27 @@ func TestStopJobArgsIgnoreMissingJobs(t *testing.T) {
 	}
 }
 
+func TestEnvBool(t *testing.T) {
+	t.Setenv("TEST_BOOL", "false")
+	if envBool("TEST_BOOL", true) {
+		t.Fatal("expected false")
+	}
+	t.Setenv("TEST_BOOL", "yes")
+	if !envBool("TEST_BOOL", false) {
+		t.Fatal("expected true")
+	}
+}
+
+func TestInstallCommandSetsMonitoring(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), `"monitoring.enabled=" + strconv.FormatBool(monitoringEnabled)`) {
+		t.Fatal("install command must explicitly set monitoring.enabled")
+	}
+}
+
 func TestAuth(t *testing.T) {
 	s := &server{staticDir: t.TempDir(), token: "secret"}
 	request := httptest.NewRequest(http.MethodGet, "/api/config", nil)

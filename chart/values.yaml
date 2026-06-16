@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/infinitydon/upf-loadtest-webui
-  tag: v0.1.26
+  tag: v0.1.27
   pullPolicy: IfNotPresent
 
 trex:
@@ -29,6 +29,7 @@ defaults:
   release: upf-loadtest
   namespace: upf-loadtest
   chartVersion: 0.1.15
+  monitoringEnabled: true
 
 resources:
   requests:

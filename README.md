@@ -96,7 +96,7 @@ current baseline.
 ## Build
 
 ```sh
-docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.26 .
+docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.27 .
 ```
 
 ## Install
@@ -104,7 +104,7 @@ docker build -t ghcr.io/infinitydon/upf-loadtest-webui:v0.1.26 .
 ```sh
 helm upgrade --install upf-loadtest-webui \
   oci://ghcr.io/infinitydon/charts/upf-loadtest-webui \
-  --version 0.1.26 \
+  --version 0.1.27 \
   --namespace upf-loadtest-system \
   --create-namespace \
   --set auth.token='replace-with-a-long-random-token'
